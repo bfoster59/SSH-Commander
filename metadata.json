@@ -1,0 +1,6 @@
+{
+  "name": "Total Commander SSH Client",
+  "description": "A powerful web-based dual-pane file manager mirroring the classic Total Commander keyboard-driven interface with real local and secure remote SSH/SFTP workspace mapping.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
