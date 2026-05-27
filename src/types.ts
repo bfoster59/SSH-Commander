@@ -21,7 +21,7 @@ export interface FileEntry {
 
 export interface PaneState {
   id: 'left' | 'right';
-  type: 'local' | 'remote';
+  type: 'local' | 'remote' | 'gdrive';
   currentPath: string;
   connectionId?: string; // Active connection id if type is remote
   connectionName?: string;

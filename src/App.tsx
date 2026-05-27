@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { FileEntry, ConnectionProfile, OperationProgress } from "./types";
 import FileTable from "./components/FileTable";
 import CommandBar from "./components/CommandBar";
 import ConnectionDialog from "./components/ConnectionDialog";
 import FileViewer from "./components/FileViewer";
 import FileEditor from "./components/FileEditor";
+import TerminalModal from "./components/TerminalModal";
 import { 
   Network, 
   Search, 
@@ -19,6 +20,22 @@ import {
   Radio,
   Clock
 } from "lucide-react";
+
+import { User } from "firebase/auth";
+import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth";
+import { 
+  parseGDrivePath, 
+  buildGDrivePath, 
+  listGDriveFiles, 
+  createGDriveFolder, 
+  createGDriveFileMetadata, 
+  uploadGDriveFileContent, 
+  downloadGDriveFileAsText, 
+  downloadGDriveFileAsBlob, 
+  deleteGDriveItem, 
+  renameGDriveItem,
+  getGDriveFolderMetadata
+} from "./lib/driveApi";
 
 export default function App() {
   // Session timer ticker
@@ -39,8 +56,52 @@ export default function App() {
     return `${pad(h)}:${pad(m)}:${pad(s)}`;
   };
 
+  // Google Drive Credentials and Session States
+  const [gdriveToken, setGdriveToken] = useState<string | null>(null);
+  const [gdriveUser, setGdriveUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const unsub = initAuth(
+      (user, token) => {
+        setGdriveUser(user);
+        setGdriveToken(token);
+      },
+      () => {
+        setGdriveUser(null);
+        setGdriveToken(null);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  const handleGDriveSignIn = async () => {
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setGdriveUser(result.user);
+        setGdriveToken(result.accessToken);
+        if (leftType === 'gdrive') handleNavigate('left', 'gdrive://root');
+        if (rightType === 'gdrive') handleNavigate('right', 'gdrive://root');
+      }
+    } catch (err: any) {
+      alert(`Google Drive sign-in failed: ${err.message}`);
+    }
+  };
+
+  const handleGDriveSignOut = async () => {
+    try {
+      await logout();
+      setGdriveUser(null);
+      setGdriveToken(null);
+      if (leftType === 'gdrive') handleTogglePaneType('left', 'local');
+      if (rightType === 'gdrive') handleTogglePaneType('right', 'local');
+    } catch (err: any) {
+      alert(`Google sign-out failed: ${err.message}`);
+    }
+  };
+
   // Left Pane State
-  const [leftType, setLeftType] = useState<'local' | 'remote'>('local');
+  const [leftType, setLeftType] = useState<'local' | 'remote' | 'gdrive'>('local');
   const [leftPath, setLeftPath] = useState<string>(".");
   const [leftFiles, setLeftFiles] = useState<FileEntry[]>([]);
   const [leftSelectedIndex, setLeftSelectedIndex] = useState<number>(0);
@@ -49,7 +110,7 @@ export default function App() {
   const [leftConnectionName, setLeftConnectionName] = useState<string | undefined>(undefined);
 
   // Right Pane State
-  const [rightType, setRightType] = useState<'local' | 'remote'>('local');
+  const [rightType, setRightType] = useState<'local' | 'remote' | 'gdrive'>('local');
   const [rightPath, setRightPath] = useState<string>(".");
   const [rightFiles, setRightFiles] = useState<FileEntry[]>([]);
   const [rightSelectedIndex, setRightSelectedIndex] = useState<number>(0);
@@ -59,6 +120,66 @@ export default function App() {
 
   // Active Focus Selection Track
   const [activePane, setActivePane] = useState<'left' | 'right'>('left');
+
+  // Sorting Pane States
+  const [leftSortField, setLeftSortField] = useState<'name' | 'size' | 'modified' | null>(null);
+  const [leftSortOrder, setLeftSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  const [rightSortField, setRightSortField] = useState<'name' | 'size' | 'modified' | null>(null);
+  const [rightSortOrder, setRightSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Reusable file sorting helper keeping directories first
+  const sortFiles = useCallback((filesList: FileEntry[], field: 'name' | 'size' | 'modified' | null, order: 'asc' | 'desc') => {
+    return [...filesList].sort((a, b) => {
+      // Directories are always group-aligned to the top, even when sorting sorted files
+      if (a.isDirectory && !b.isDirectory) return -1;
+      if (!a.isDirectory && b.isDirectory) return 1;
+
+      if (!field) {
+        // Default sort (case-insensitive name ascending)
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      }
+
+      let comp = 0;
+      if (field === 'name') {
+        comp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      } else if (field === 'size') {
+        comp = a.size - b.size;
+      } else if (field === 'modified') {
+        const timeA = a.lastModified || 0;
+        const timeB = b.lastModified || 0;
+        comp = timeA - timeB;
+      }
+
+      return order === 'asc' ? comp : -comp;
+    });
+  }, []);
+
+  const sortedLeftFiles = useMemo(() => {
+    return sortFiles(leftFiles, leftSortField, leftSortOrder);
+  }, [leftFiles, leftSortField, leftSortOrder, sortFiles]);
+
+  const sortedRightFiles = useMemo(() => {
+    return sortFiles(rightFiles, rightSortField, rightSortOrder);
+  }, [rightFiles, rightSortField, rightSortOrder, sortFiles]);
+
+  const handleSort = useCallback((pane: 'left' | 'right', field: 'name' | 'size' | 'modified') => {
+    if (pane === 'left') {
+      if (leftSortField === field) {
+        setLeftSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+      } else {
+        setLeftSortField(field);
+        setLeftSortOrder('asc');
+      }
+    } else {
+      if (rightSortField === field) {
+        setRightSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+      } else {
+        setRightSortField(field);
+        setRightSortOrder('asc');
+      }
+    }
+  }, [leftSortField, rightSortField]);
 
   // Connection Dialog Management
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
@@ -93,6 +214,21 @@ export default function App() {
 
   // Track file context highlight after navigating back from Search Matches
   const [pendingSelection, setPendingSelection] = useState<{ pane: 'left' | 'right'; name: string } | null>(null);
+
+  // Terminal state parameters
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalInitialPath, setTerminalInitialPath] = useState("");
+  const [terminalPaneId, setTerminalPaneId] = useState<'left' | 'right'>('left');
+
+  const handleOpenTerminal = (pane: 'left' | 'right', path: string) => {
+    setTerminalPaneId(pane);
+    setTerminalInitialPath(path);
+    setTerminalOpen(true);
+  };
+
+  const handleSyncCommanderPath = async (pane: 'left' | 'right', path: string) => {
+    await handleNavigate(pane, path);
+  };
 
   // Load initial environment folder context
   useEffect(() => {
@@ -154,6 +290,60 @@ export default function App() {
     const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
     try {
+      if (type === 'gdrive') {
+        let actualPath = targetPath;
+        let activeToken = gdriveToken;
+        if (!activeToken) {
+          if (pane === 'left') {
+            setLeftPath(targetPath);
+            setLeftFiles([]);
+            setLeftSelectedIndex(0);
+            setLeftSelectedIndices([0]);
+          } else {
+            setRightPath(targetPath);
+            setRightFiles([]);
+            setRightSelectedIndex(0);
+            setRightSelectedIndices([0]);
+          }
+          return;
+        }
+
+        if (targetPath.endsWith("/..")) {
+          const pathWithoutSlashDotDot = targetPath.slice(0, -3);
+          const { folderId: currentFolderId, humanPath: currentHumanPath } = parseGDrivePath(pathWithoutSlashDotDot);
+          
+          if (currentFolderId === 'root' || !currentFolderId) {
+             return;
+          }
+
+          const meta = await getGDriveFolderMetadata(activeToken, currentFolderId);
+          const parentId = meta.parentId || 'root';
+
+          const humanParts = currentHumanPath.split('/').filter(Boolean);
+          if (humanParts.length > 0) {
+            humanParts.pop();
+          }
+          const parentHumanPath = humanParts.join('/');
+          actualPath = buildGDrivePath(parentHumanPath || 'My Drive', parentId);
+        }
+
+        const { folderId } = parseGDrivePath(actualPath);
+        const files = await listGDriveFiles(activeToken, folderId);
+
+        if (pane === 'left') {
+          setLeftPath(actualPath);
+          setLeftFiles(files);
+          setLeftSelectedIndex(0);
+          setLeftSelectedIndices([0]);
+        } else {
+          setRightPath(actualPath);
+          setRightFiles(files);
+          setRightSelectedIndex(0);
+          setRightSelectedIndices([0]);
+        }
+        return;
+      }
+
       if (type === 'local') {
         const res = await fetch('/api/local/list', {
           method: 'POST',
@@ -241,13 +431,19 @@ export default function App() {
     handleNavigate(pane, path);
   };
 
-  const handleTogglePaneType = (pane: 'left' | 'right', newType: 'local' | 'remote') => {
+  const handleTogglePaneType = (pane: 'left' | 'right', newType: 'local' | 'remote' | 'gdrive') => {
     if (pane === 'left') {
       if (newType === 'local') {
         setLeftType('local');
         setLeftConnectionId(undefined);
         setLeftConnectionName(undefined);
         handleNavigate('left', '.');
+      } else if (newType === 'gdrive') {
+        setLeftType('gdrive');
+        setLeftConnectionId(undefined);
+        setLeftConnectionName(undefined);
+        setLeftPath('gdrive://root');
+        handleNavigate('left', 'gdrive://root');
       } else {
         setIsConnectionOpen(true);
       }
@@ -257,6 +453,12 @@ export default function App() {
         setRightConnectionId(undefined);
         setRightConnectionName(undefined);
         handleNavigate('right', '.');
+      } else if (newType === 'gdrive') {
+        setRightType('gdrive');
+        setRightConnectionId(undefined);
+        setRightConnectionName(undefined);
+        setRightPath('gdrive://root');
+        handleNavigate('right', 'gdrive://root');
       } else {
         setIsConnectionOpen(true);
       }
@@ -322,7 +524,7 @@ export default function App() {
   };
 
   const triggerOpenSelected = (pane: 'left' | 'right') => {
-    const files = pane === 'left' ? leftFiles : rightFiles;
+    const files = pane === 'left' ? sortedLeftFiles : sortedRightFiles;
     const index = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
 
     if (index === 0) {
@@ -353,7 +555,11 @@ export default function App() {
   const handleF3ViewForFile = async (name: string, filePath: string, isRemote: boolean, connId?: string) => {
     try {
       let content = "";
-      if (isRemote) {
+      if (filePath.startsWith("gdrive://")) {
+        const { folderId } = parseGDrivePath(filePath);
+        if (!gdriveToken) throw new Error("Google Drive is not connected. Please log in first.");
+        content = await downloadGDriveFileAsText(gdriveToken, folderId);
+      } else if (isRemote) {
         const res = await fetch('/api/ssh/read', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -392,7 +598,7 @@ export default function App() {
   // Keyboard operations definitions (F3, F4, F5, F6, F7, F8, F10)
   const triggerF3View = () => {
     const pane = activePane;
-    const files = pane === 'left' ? leftFiles : rightFiles;
+    const files = pane === 'left' ? sortedLeftFiles : sortedRightFiles;
     const index = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
 
     if (index === 0) return;
@@ -413,7 +619,7 @@ export default function App() {
 
   const triggerF4Edit = async () => {
     const pane = activePane;
-    const files = pane === 'left' ? leftFiles : rightFiles;
+    const files = pane === 'left' ? sortedLeftFiles : sortedRightFiles;
     const index = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
 
     if (index === 0) return;
@@ -429,7 +635,11 @@ export default function App() {
       const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
       let content = "";
-      if (isRemote) {
+      if (fullSourcePath.startsWith("gdrive://")) {
+        const { folderId } = parseGDrivePath(fullSourcePath);
+        if (!gdriveToken) throw new Error("Google Drive is not connected. Please log in first.");
+        content = await downloadGDriveFileAsText(gdriveToken, folderId);
+      } else if (isRemote) {
         const res = await fetch('/api/ssh/read', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -466,7 +676,7 @@ export default function App() {
   };
 
   const getSelectedEntries = (pane: 'left' | 'right') => {
-    const paneFiles = pane === 'left' ? leftFiles : rightFiles;
+    const paneFiles = pane === 'left' ? sortedLeftFiles : sortedRightFiles;
     const activeIndices = pane === 'left' ? leftSelectedIndices : rightSelectedIndices;
     const hoverIndex = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
 
@@ -514,6 +724,139 @@ export default function App() {
     triggerTransferJob(srcPane, dstPane, fullSourcePaths);
   };
 
+  const runClientGDriveTransfer = async (
+    srcPane: 'left' | 'right',
+    dstPane: 'left' | 'right',
+    selectedEntries: any[],
+    srcPath: string,
+    dstPath: string
+  ) => {
+    const srcType = srcPane === 'left' ? leftType : rightType;
+    const dstType = dstPane === 'left' ? leftType : rightType;
+    const srcConnId = srcPane === 'left' ? leftConnectionId : rightConnectionId;
+    const dstConnId = dstPane === 'left' ? leftConnectionId : rightConnectionId;
+
+    setJobProgress({
+      active: true,
+      title: "Google Drive Co-processor running...",
+      percentage: 0,
+      currentItem: "Opening stream handles...",
+      bytesTransferred: 0,
+      totalBytes: selectedEntries.length
+    });
+
+    try {
+      const activeToken = gdriveToken;
+      if (!activeToken) throw new Error("Google Drive auth is not active. Please connect Drive.");
+
+      const { folderId: dstFolderId } = dstType === 'gdrive' ? parseGDrivePath(dstPath) : { folderId: '' };
+
+      for (let i = 0; i < selectedEntries.length; i++) {
+        const file = selectedEntries[i];
+        const pct = Math.round((i / selectedEntries.length) * 100);
+
+        setJobProgress(prev => prev ? {
+          ...prev,
+          percentage: pct,
+          currentItem: `Transferring "${file.name}" (${i + 1}/${selectedEntries.length})...`
+        } : null);
+
+        if (srcType === 'gdrive') {
+          const driveId = (file as any).driveId;
+          if (!driveId) continue;
+
+          if (file.isDirectory) {
+            alert(`Transfer directory recursively from Drive is limited in preview. Skipping folder: ${file.name}`);
+            continue;
+          }
+
+          const blob = await downloadGDriveFileAsBlob(activeToken, driveId);
+          const content = await blob.text();
+
+          if (dstType === 'local') {
+            const separator = dstPath.includes('/') ? '/' : '\\';
+            const dstFilePath = dstPath.endsWith(separator) ? dstPath + file.name : dstPath + separator + file.name;
+            await fetch('/api/local/write', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: dstFilePath, content })
+            });
+          } else if (dstType === 'remote') {
+            const separator = '/';
+            const dstFilePath = dstPath.endsWith(separator) ? dstPath + file.name : dstPath + separator + file.name;
+            await fetch('/api/ssh/write', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ connectionId: dstConnId, path: dstFilePath, content })
+            });
+          } else if (dstType === 'gdrive') {
+            await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}/copy`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${activeToken}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                name: "Copy of " + file.name,
+                parents: [dstFolderId]
+              })
+            });
+          }
+        } else {
+          if (file.isDirectory) {
+            await createGDriveFolder(activeToken, dstFolderId, file.name);
+            continue;
+          }
+
+          const separator = srcPath.includes('/') ? '/' : '\\';
+          const srcFilePath = srcPath.endsWith(separator) ? srcPath + file.name : srcPath + separator + file.name;
+
+          let content = "";
+          if (srcType === 'local') {
+            const res = await fetch('/api/local/read', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: srcFilePath })
+            });
+            if (res.ok) {
+              const json = await res.json();
+              content = json.content;
+            }
+          } else if (srcType === 'remote') {
+            const res = await fetch('/api/ssh/read', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ connectionId: srcConnId, path: srcFilePath })
+            });
+            if (res.ok) {
+              const json = await res.json();
+              content = json.content;
+            }
+          }
+
+          const fileId = await createGDriveFileMetadata(activeToken, dstFolderId, file.name);
+          await uploadGDriveFileContent(activeToken, fileId, content);
+        }
+      }
+
+      setJobProgress({
+        active: false,
+        title: "Client Transfer Completed",
+        percentage: 100,
+        currentItem: "Files copied successfully.",
+        bytesTransferred: selectedEntries.length,
+        totalBytes: selectedEntries.length
+      });
+
+      setTimeout(() => setJobProgress(null), 2000);
+      triggerRefresh('left');
+      triggerRefresh('right');
+    } catch (err: any) {
+      alert(`GDrive co-processor transfer failed: ${err.message}`);
+      setJobProgress(null);
+    }
+  };
+
   const triggerTransferJob = async (
     srcPane: 'left' | 'right',
     dstPane: 'left' | 'right',
@@ -521,11 +864,17 @@ export default function App() {
   ) => {
     const srcType = srcPane === 'left' ? leftType : rightType;
     const dstType = dstPane === 'left' ? leftType : rightType;
+    const targetFolder = dstPane === 'left' ? leftPath : rightPath;
+
+    if (srcType === 'gdrive' || dstType === 'gdrive') {
+      const selectedEntries = getSelectedEntries(srcPane);
+      const srcPath = srcPane === 'left' ? leftPath : rightPath;
+      await runClientGDriveTransfer(srcPane, dstPane, selectedEntries, srcPath, targetFolder);
+      return;
+    }
 
     const srcConnId = srcPane === 'left' ? leftConnectionId : rightConnectionId;
     const dstConnId = dstPane === 'left' ? leftConnectionId : rightConnectionId;
-
-    const targetFolder = dstPane === 'left' ? leftPath : rightPath;
 
     const sourcePayload: any = {
       type: srcType,
@@ -591,6 +940,22 @@ export default function App() {
     const selectedEntries = getSelectedEntries(pane);
     if (selectedEntries.length === 0) {
       alert("Please select files/directories to move/rename");
+      return;
+    }
+
+    const type = pane === 'left' ? leftType : rightType;
+    if (type === 'gdrive') {
+      const selectedFile = selectedEntries[0] as any;
+      if (!selectedFile?.driveId) return;
+      const responseName = window.prompt(`Rename Google Drive item: Enter new name for "${selectedFile.name}"`, selectedFile.name);
+      if (!responseName) return;
+      try {
+        if (!gdriveToken) throw new Error("Google Drive auth is not active. Please log in first.");
+        await renameGDriveItem(gdriveToken, selectedFile.driveId, responseName);
+        triggerRefresh(pane);
+      } catch (err: any) {
+        alert(`Rename exception: ${err.message}`);
+      }
       return;
     }
 
@@ -690,11 +1055,24 @@ export default function App() {
   const triggerF7NewFolder = async () => {
     const pane = activePane;
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const separator = basePath.includes("/") ? "/" : "\\";
+    const type = pane === 'left' ? leftType : rightType;
 
     const name = window.prompt("Mkdir: Enter new foldermap name to create inside the current directory:");
     if (!name) return;
 
+    if (type === 'gdrive') {
+      try {
+        if (!gdriveToken) throw new Error("Google Drive auth is not active. Please log in first.");
+        const { folderId } = parseGDrivePath(basePath);
+        await createGDriveFolder(gdriveToken, folderId, name);
+        triggerRefresh(pane);
+      } catch (err: any) {
+        alert(`Folder creation error: ${err.message}`);
+      }
+      return;
+    }
+
+    const separator = basePath.includes("/") ? "/" : "\\";
     const resolved = basePath.endsWith(separator) ? basePath + name : basePath + separator + name;
 
     try {
@@ -741,6 +1119,24 @@ export default function App() {
       ? window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting "${selectedEntries[0].name}"?`)
       : window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting ${selectedEntries.length} selected items?`);
     if (!isConfirmed) return;
+
+    const type = pane === 'left' ? leftType : rightType;
+    if (type === 'gdrive') {
+      try {
+        if (!gdriveToken) throw new Error("Google Drive auth is not active. Please log in first.");
+        for (const file of selectedEntries) {
+          const selectedFile = file as any;
+          if (selectedFile.driveId) {
+            await deleteGDriveItem(gdriveToken, selectedFile.driveId);
+          }
+        }
+        triggerRefresh(pane);
+      } catch (err: any) {
+        alert(`Deletion error: ${err.message}`);
+        triggerRefresh(pane);
+      }
+      return;
+    }
 
     const basePath = pane === 'left' ? leftPath : rightPath;
     const separator = basePath.includes("/") ? "/" : "\\";
@@ -820,7 +1216,11 @@ export default function App() {
   const handleEditorSave = async (filePath: string, content: string, isRemote: boolean) => {
     try {
       const connId = activePane === 'left' ? leftConnectionId : rightConnectionId;
-      if (isRemote) {
+      if (filePath.startsWith("gdrive://")) {
+        const { folderId } = parseGDrivePath(filePath);
+        if (!gdriveToken) throw new Error("Google Drive connection expired. Please log in again.");
+        await uploadGDriveFileContent(gdriveToken, folderId, content);
+      } else if (isRemote) {
         const res = await fetch('/api/ssh/write', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -925,7 +1325,7 @@ export default function App() {
   // Selection summaries calculation
   const getSelectionSummary = () => {
     const pane = activePane;
-    const files = pane === 'left' ? leftFiles : rightFiles;
+    const files = pane === 'left' ? sortedLeftFiles : sortedRightFiles;
     const index = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
 
     if (index === 0) {
@@ -958,7 +1358,7 @@ export default function App() {
       }
 
       const pane = activePane;
-      const files = pane === 'left' ? leftFiles : rightFiles;
+      const files = pane === 'left' ? sortedLeftFiles : sortedRightFiles;
       const maxIndex = files.length; // index up to files.length is valid because visual index offsets by 1
       const currentIndex = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
 
@@ -1093,8 +1493,8 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, [
     activePane,
-    leftFiles,
-    rightFiles,
+    sortedLeftFiles,
+    sortedRightFiles,
     leftSelectedIndex,
     rightSelectedIndex,
     leftSelectedIndices,
@@ -1174,7 +1574,7 @@ export default function App() {
             id="left"
             type={leftType}
             currentPath={leftPath}
-            files={leftFiles}
+            files={sortedLeftFiles}
             selectedIndex={leftSelectedIndex}
             selectedIndices={leftSelectedIndices}
             focused={activePane === 'left'}
@@ -1189,6 +1589,19 @@ export default function App() {
             connectionId={leftConnectionId}
             connectionName={leftConnectionName}
             localDrives={localDrives}
+            isGDriveSignedIn={Boolean(gdriveToken)}
+            gdriveUserEmail={gdriveUser?.email || ""}
+            onGDriveSignIn={handleGDriveSignIn}
+            onGDriveSignOut={handleGDriveSignOut}
+            sortField={leftSortField}
+            sortOrder={leftSortOrder}
+            onSort={(field) => handleSort('left', field)}
+            onF3View={triggerF3View}
+            onF4Edit={triggerF4Edit}
+            onF5Copy={triggerF5Copy}
+            onF6Move={triggerF6Move}
+            onF8Delete={triggerF8Delete}
+            onOpenTerminal={(path) => handleOpenTerminal('left', path)}
           />
         </section>
 
@@ -1203,7 +1616,7 @@ export default function App() {
             id="right"
             type={rightType}
             currentPath={rightPath}
-            files={rightFiles}
+            files={sortedRightFiles}
             selectedIndex={rightSelectedIndex}
             selectedIndices={rightSelectedIndices}
             focused={activePane === 'right'}
@@ -1218,6 +1631,19 @@ export default function App() {
             connectionId={rightConnectionId}
             connectionName={rightConnectionName}
             localDrives={localDrives}
+            isGDriveSignedIn={Boolean(gdriveToken)}
+            gdriveUserEmail={gdriveUser?.email || ""}
+            onGDriveSignIn={handleGDriveSignIn}
+            onGDriveSignOut={handleGDriveSignOut}
+            sortField={rightSortField}
+            sortOrder={rightSortOrder}
+            onSort={(field) => handleSort('right', field)}
+            onF3View={triggerF3View}
+            onF4Edit={triggerF4Edit}
+            onF5Copy={triggerF5Copy}
+            onF6Move={triggerF6Move}
+            onF8Delete={triggerF8Delete}
+            onOpenTerminal={(path) => handleOpenTerminal('right', path)}
           />
         </section>
       </main>
@@ -1263,6 +1689,18 @@ export default function App() {
         initialContent={editorContent}
         isRemote={editorIsRemote}
         onSave={handleEditorSave}
+      />
+
+      {/* Interactive native shell/SSH terminal session portal */}
+      <TerminalModal
+        isOpen={terminalOpen}
+        onClose={() => setTerminalOpen(false)}
+        paneId={terminalPaneId}
+        type={terminalPaneId === 'left' ? leftType : rightType}
+        connectionId={terminalPaneId === 'left' ? leftConnectionId : rightConnectionId}
+        connectionName={terminalPaneId === 'left' ? leftConnectionName : rightConnectionName}
+        initialPath={terminalInitialPath}
+        onSyncCommanderPath={handleSyncCommanderPath}
       />
 
       {/* Highly polished, responsive recursive search modal overlay */}

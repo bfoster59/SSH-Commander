@@ -1007,6 +1007,60 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
   }
 }
 
+app.post("/api/terminal/exec", async (req, res) => {
+  try {
+    const { type, connectionId, cmd, cwd } = req.body;
+    
+    if (!cmd) {
+      return res.json({ stdout: "", stderr: "", code: 0 });
+    }
+
+    if (type === "remote") {
+      let session;
+      try {
+        session = getSSHSession(connectionId);
+      } catch (sessErr: any) {
+        return res.status(401).json({ error: sessErr.message });
+      }
+
+      const { client } = session;
+      const escapedCwd = cwd ? cwd.replace(/"/g, '\\"') : ".";
+      const fullCmd = `cd "${escapedCwd}" && ${cmd}`;
+
+      client.exec(fullCmd, (err, stream) => {
+        if (err) {
+          return res.status(500).json({ error: `SSH execution error: ${err.message}` });
+        }
+        let stdout = "";
+        let stderr = "";
+        stream.on("data", (data: any) => {
+          stdout += data.toString();
+        });
+        stream.stderr.on("data", (data: any) => {
+          stderr += data.toString();
+        });
+        stream.on("close", (code) => {
+          res.json({ stdout, stderr, code: code ?? 0 });
+        });
+      });
+    } else {
+      const { exec: localExec } = await import("child_process");
+      const localCwd = cwd ? path.resolve(cwd) : process.cwd();
+
+      localExec(cmd, { cwd: localCwd }, (err, stdout, stderr) => {
+        const code = err ? (err.code ?? 1) : 0;
+        res.json({
+          stdout: stdout.toString(),
+          stderr: stderr ? stderr.toString() : (err ? err.message : ""),
+          code
+        });
+      });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ---- VITE SETUP & STATIC MIDDLEWARE ----
 
