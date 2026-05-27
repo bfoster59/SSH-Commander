@@ -269,11 +269,19 @@ app.post("/api/ssh/connect", (req, res) => {
       });
 
       // Fetch remote home directory path
-      sftp.realpath(".", (realPathErr, homePath) => {
-        if (realPathErr) {
+      sftp.readdir("~", (err, list) => {
+        if (err) {
+          // Fallback to root if home is not accessible
           res.json({ connectionId: connId, homePath: "/" });
         } else {
-          res.json({ connectionId: connId, homePath });
+          // Successfully probed home, now get its absolute path
+          sftp.realpath("~", (realPathErr, homePath) => {
+            if (realPathErr) {
+              res.json({ connectionId: connId, homePath: "/" }); // Should be rare
+            } else {
+              res.json({ connectionId: connId, homePath });
+            }
+          });
         }
       });
     });
