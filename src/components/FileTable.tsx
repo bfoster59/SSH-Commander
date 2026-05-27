@@ -18,9 +18,10 @@ interface FileTableProps {
   currentPath: string;
   files: FileEntry[];
   selectedIndex: number;
+  selectedIndices: number[];
   focused: boolean;
   onFocus: () => void;
-  onSelect: (index: number) => void;
+  onSelect: (index: number, selectedIndices: number[]) => void;
   onNavigate: (newPath: string) => void;
   onRefresh: () => void;
   onToggleType: (newType: 'local' | 'remote') => void;
@@ -35,6 +36,7 @@ export default function FileTable({
   currentPath,
   files,
   selectedIndex,
+  selectedIndices = [0],
   focused,
   onFocus,
   onSelect,
@@ -63,9 +65,40 @@ export default function FileTable({
     }
   }, [selectedIndex, focused]);
 
-  const handleRowClick = (index: number) => {
+  const handleRowClick = (index: number, event: React.MouseEvent) => {
     onFocus();
-    onSelect(index);
+
+    let newSelectedIndices = [...selectedIndices];
+
+    if (index === 0) {
+      newSelectedIndices = [0];
+    } else {
+      const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const hasCmdOrCtrl = isMac ? event.metaKey : event.ctrlKey;
+      const hasShift = event.shiftKey;
+
+      if (hasCmdOrCtrl) {
+        if (selectedIndices.includes(index)) {
+          newSelectedIndices = selectedIndices.filter(i => i !== index);
+        } else {
+          newSelectedIndices = [...selectedIndices.filter(i => i !== 0), index];
+        }
+      } else if (hasShift) {
+        const anchor = selectedIndices.length > 0 ? selectedIndex : 1;
+        const start = Math.max(1, Math.min(anchor, index));
+        const end = Math.max(1, Math.max(anchor, index));
+        
+        const temp: number[] = [];
+        for (let i = start; i <= end; i++) {
+          temp.push(i);
+        }
+        newSelectedIndices = temp;
+      } else {
+        newSelectedIndices = [index];
+      }
+    }
+
+    onSelect(index, newSelectedIndices);
   };
 
   const formatSize = (bytes: number, isDirectory: boolean) => {
@@ -85,7 +118,7 @@ export default function FileTable({
 
   const handleDoubleClick = (entry: FileEntry, index: number) => {
     onFocus();
-    onSelect(index);
+    onSelect(index, [index]);
     if (entry.name === "..") {
       goUp();
     } else if (entry.isDirectory) {
@@ -295,20 +328,30 @@ export default function FileTable({
             ) : (
               visualFiles.map((entry, index) => {
                 const isSelected = selectedIndex === index;
-                // Offset index count back by 1 if ignoring root `..`
+                const isMultiSelected = selectedIndices.includes(index);
+
+                // Construct clean classNames
+                let rowBgClass = "text-[#C1C2C5] hover:bg-[#25262B]";
+                if (isMultiSelected) {
+                  rowBgClass = focused 
+                    ? "bg-[#339AF0]/25 text-white font-semibold" 
+                    : "bg-[#25262B]/80 text-white font-medium";
+                } else if (isSelected) {
+                  rowBgClass = "bg-[#2C2E33]/40 text-white";
+                }
+
+                // High-visibility focus cursor
+                const focusClass = (isSelected && focused) 
+                  ? "ring-1 ring-[#339AF0]/40 outline-1 outline-[#339AF0]/30" 
+                  : "";
+
                 return (
                   <tr
                     key={`${entry.name}-${index}`}
                     ref={el => { rowsRef.current[index] = el; }}
-                    onClick={() => handleRowClick(index)}
+                    onClick={(e) => handleRowClick(index, e)}
                     onDoubleClick={() => handleDoubleClick(entry, index)}
-                    className={`cursor-pointer text-xs font-mono transition-colors min-h-[2rem] select-none ${
-                      isSelected && focused
-                        ? "bg-[#339AF0]/25 text-white font-semibold outline-1 outline-[#339AF0]/40" 
-                        : isSelected
-                        ? "bg-[#25262B] text-white" 
-                        : "text-[#C1C2C5] hover:bg-[#25262B]"
-                    }`}
+                    className={`cursor-pointer text-xs font-mono transition-colors min-h-[2rem] select-none ${rowBgClass} ${focusClass}`}
                   >
                     {/* File/dir name column */}
                     <td className="py-2 px-3 truncate font-mono">
@@ -349,11 +392,31 @@ export default function FileTable({
       {/* Panel status row statistics */}
       <div className="bg-[#14161A] px-3 py-1.5 border-t border-[#2C2E33] text-[10px] text-[#5C5F66] flex justify-between tracking-wide select-none">
         <span>Files: {files.filter(f => !f.isDirectory).length} | Dirs: {files.filter(f => f.isDirectory).length}</span>
-        {selectedIndex >= 0 && selectedIndex < visualFiles.length && (
-          <span className="text-[#339AF0] font-semibold truncate max-w-[200px]">
-            Selected: {visualFiles[selectedIndex].name}
-          </span>
-        )}
+        {(() => {
+          const actualSelectedCount = selectedIndices.filter(i => i > 0).length;
+          if (actualSelectedCount > 1) {
+            return (
+              <span className="text-[#339AF0] font-semibold truncate max-w-[200px]">
+                Selected: {actualSelectedCount} items
+              </span>
+            );
+          } else if (actualSelectedCount === 1) {
+            const selectedIdx = selectedIndices.find(i => i > 0) || 1;
+            const selectedName = visualFiles[selectedIdx]?.name || "";
+            return (
+              <span className="text-[#339AF0] font-semibold truncate max-w-[200px]" title={selectedName}>
+                Selected: {selectedName}
+              </span>
+            );
+          } else if (selectedIndex === 0) {
+            return (
+              <span className="text-[#339AF0] font-semibold truncate max-w-[200px]">
+                Selected: [ .. ]
+              </span>
+            );
+          }
+          return null;
+        })()}
       </div>
     </div>
   );

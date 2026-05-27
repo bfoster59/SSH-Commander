@@ -608,6 +608,7 @@ function runSFTPSearch(sftp: any, basePath: string, query: string, res: any) {
 interface TransferEndpoint {
   type: "local" | "remote";
   path: string;
+  paths?: string[];
   connectionId?: string;
 }
 
@@ -686,109 +687,134 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
   };
 
   try {
-    // Stage 1: Stat source node
-    let srcIsDirectory = false;
+    // Stage 1: Stat source nodes
     let entriesToCopy: { relPath: string; absoluteSource: string; size: number }[] = [];
 
     // Fetch information recursively first to gather full count + sizes
     updateProgress("Calculating contents...", 1);
 
-    if (source.type === "local") {
-      const srcStat = await fs.promises.stat(path.resolve(source.path));
-      srcIsDirectory = srcStat.isDirectory();
+    const activePaths = source.paths && source.paths.length > 0 ? source.paths : [source.path];
 
-      if (srcIsDirectory) {
-        const baseName = path.basename(source.path);
-        const scanDirRecursive = async (currDir: string) => {
-          checkCancellation();
-          const items = await fs.promises.readdir(currDir, { withFileTypes: true });
-          for (const item of items) {
-            const absolutePath = path.join(currDir, item.name);
-            const relPath = path.relative(path.dirname(source.path), absolutePath);
-            if (item.isDirectory()) {
-              await scanDirRecursive(absolutePath);
-            } else {
-              const fileStat = await fs.promises.stat(absolutePath);
-              entriesToCopy.push({
-                relPath,
-                absoluteSource: absolutePath,
-                size: fileStat.size,
-              });
+    for (const srcPath of activePaths) {
+      checkCancellation();
+      const resolvedSrcPath = srcPath;
+
+      if (source.type === "local") {
+        const resolvedPath = path.resolve(resolvedSrcPath);
+        const srcStat = await fs.promises.stat(resolvedPath);
+        const srcIsDirectory = srcStat.isDirectory();
+
+        if (srcIsDirectory) {
+          const scanDirRecursive = async (currDir: string) => {
+            checkCancellation();
+            const items = await fs.promises.readdir(currDir, { withFileTypes: true });
+            for (const item of items) {
+              const absolutePath = path.join(currDir, item.name);
+              const relPath = path.relative(path.dirname(resolvedPath), absolutePath);
+              if (item.isDirectory()) {
+                await scanDirRecursive(absolutePath);
+              } else {
+                const fileStat = await fs.promises.stat(absolutePath);
+                entriesToCopy.push({
+                  relPath,
+                  absoluteSource: absolutePath,
+                  size: fileStat.size,
+                });
+              }
             }
-          }
-        };
-        await scanDirRecursive(source.path);
-      } else {
-        entriesToCopy.push({
-          relPath: path.basename(source.path),
-          absoluteSource: source.path,
-          size: srcStat.size,
-        });
-      }
-    } else {
-      // Remote source
-      const { sftp } = getSSHSession(source.connectionId!);
-      
-      const remoteStatPromise = () => new Promise<any>((resolve, reject) => {
-        sftp.stat(source.path, (err, stats) => {
-          if (err) reject(err);
-          else resolve(stats);
-        });
-      });
-
-      const srcStats = await remoteStatPromise();
-      srcIsDirectory = (srcStats.mode & 0o170000) === 0o040000;
-
-      if (srcIsDirectory) {
-        const scanRemoteRecursive = async (currPath: string) => {
-          checkCancellation();
-          const items = await new Promise<any[]>((resolve, reject) => {
-            sftp.readdir(currPath, (err, list) => {
-              if (err) reject(err);
-              else resolve(list || []);
-            });
+          };
+          await scanDirRecursive(resolvedPath);
+        } else {
+          entriesToCopy.push({
+            relPath: path.basename(resolvedPath),
+            absoluteSource: resolvedPath,
+            size: srcStat.size,
           });
-
-          for (const item of items) {
-            const absolutePath = path.join(currPath, item.filename).replace(/\\/g, "/");
-            const relPath = path.relative(path.dirname(source.path), absolutePath).replace(/\\/g, "/");
-            const itemIsDir = (item.attrs.mode & 0o170000) === 0o040000;
-
-            if (itemIsDir) {
-              await scanRemoteRecursive(absolutePath);
-            } else {
-              entriesToCopy.push({
-                relPath,
-                absoluteSource: absolutePath,
-                size: item.attrs.size,
-              });
-            }
-          }
-        };
-        await scanRemoteRecursive(source.path);
+        }
       } else {
-        entriesToCopy.push({
-          relPath: path.basename(source.path),
-          absoluteSource: source.path,
-          size: srcStats.size,
+        // Remote source
+        const { sftp } = getSSHSession(source.connectionId!);
+        
+        const remoteStatPromise = () => new Promise<any>((resolve, reject) => {
+          sftp.stat(resolvedSrcPath, (err, stats) => {
+            if (err) reject(err);
+            else resolve(stats);
+          });
         });
+
+        const srcStats = await remoteStatPromise();
+        const srcIsDirectory = (srcStats.mode & 0o170000) === 0o040000;
+
+        if (srcIsDirectory) {
+          const scanRemoteRecursive = async (currPath: string) => {
+            checkCancellation();
+            const items = await new Promise<any[]>((resolve, reject) => {
+              sftp.readdir(currPath, (err, list) => {
+                if (err) reject(err);
+                else resolve(list || []);
+              });
+            });
+
+            for (const item of items) {
+              if (item.filename === "." || item.filename === "..") continue;
+              const absolutePath = path.join(currPath, item.filename).replace(/\\/g, "/");
+              const relPath = path.relative(path.dirname(resolvedSrcPath), absolutePath).replace(/\\/g, "/");
+              const itemIsDir = (item.attrs.mode & 0o170000) === 0o040000;
+
+              if (itemIsDir) {
+                await scanRemoteRecursive(absolutePath);
+              } else {
+                entriesToCopy.push({
+                  relPath,
+                  absoluteSource: absolutePath,
+                  size: item.attrs.size,
+                });
+              }
+            }
+          };
+          await scanRemoteRecursive(resolvedSrcPath);
+        } else {
+          entriesToCopy.push({
+            relPath: path.basename(resolvedSrcPath),
+            absoluteSource: resolvedSrcPath,
+            size: srcStats.size,
+          });
+        }
       }
     }
 
     if (entriesToCopy.length === 0) {
-      // Create empty folder directly
-      if (srcIsDirectory) {
-        const targetDir = path.join(target.path, path.basename(source.path));
-        if (target.type === "local") {
-          await fs.promises.mkdir(path.resolve(targetDir), { recursive: true });
+      // Create empty folders directly
+      for (const p of activePaths) {
+        if (source.type === "local") {
+          const resolvedP = path.resolve(p);
+          const srcStat = await fs.promises.stat(resolvedP);
+          if (srcStat.isDirectory()) {
+            const targetDir = path.join(target.path, path.basename(resolvedP));
+            await fs.promises.mkdir(path.resolve(targetDir), { recursive: true });
+          }
         } else {
-          const { sftp } = getSSHSession(target.connectionId!);
-          await new Promise<void>((resolve, reject) => {
-            sftp.mkdir(targetDir.replace(/\\/g, "/"), (err) => {
+          const { sftp } = getSSHSession(source.connectionId!);
+          const stats = await new Promise<any>((resolve, reject) => {
+            sftp.stat(p, (err, s) => {
               if (err) reject(err);
-              else resolve();
+              else resolve(s);
             });
           });
+          const srcIsDirectory = (stats.mode & 0o170000) === 0o040000;
+          if (srcIsDirectory) {
+            const targetDir = path.join(target.path, path.basename(p));
+            if (target.type === "local") {
+              await fs.promises.mkdir(path.resolve(targetDir), { recursive: true });
+            } else {
+              const { sftp: targetSftp } = getSSHSession(target.connectionId!);
+              await new Promise<void>((resolve, reject) => {
+                targetSftp.mkdir(targetDir.replace(/\\/g, "/"), (err) => {
+                  resolve();
+                });
+              });
+            }
+          }
         }
       }
       

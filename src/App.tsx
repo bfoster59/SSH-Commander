@@ -44,6 +44,7 @@ export default function App() {
   const [leftPath, setLeftPath] = useState<string>(".");
   const [leftFiles, setLeftFiles] = useState<FileEntry[]>([]);
   const [leftSelectedIndex, setLeftSelectedIndex] = useState<number>(0);
+  const [leftSelectedIndices, setLeftSelectedIndices] = useState<number[]>([0]);
   const [leftConnectionId, setLeftConnectionId] = useState<string | undefined>(undefined);
   const [leftConnectionName, setLeftConnectionName] = useState<string | undefined>(undefined);
 
@@ -52,6 +53,7 @@ export default function App() {
   const [rightPath, setRightPath] = useState<string>(".");
   const [rightFiles, setRightFiles] = useState<FileEntry[]>([]);
   const [rightSelectedIndex, setRightSelectedIndex] = useState<number>(0);
+  const [rightSelectedIndices, setRightSelectedIndices] = useState<number[]>([0]);
   const [rightConnectionId, setRightConnectionId] = useState<string | undefined>(undefined);
   const [rightConnectionName, setRightConnectionName] = useState<string | undefined>(undefined);
 
@@ -167,10 +169,12 @@ export default function App() {
           setLeftPath(data.path);
           setLeftFiles(data.files);
           setLeftSelectedIndex(0);
+          setLeftSelectedIndices([0]);
         } else {
           setRightPath(data.path);
           setRightFiles(data.files);
           setRightSelectedIndex(0);
+          setRightSelectedIndices([0]);
         }
 
         // Apply any pending highlighter selections (e.g., from double-clicking searches)
@@ -178,8 +182,13 @@ export default function App() {
           const matchIdx = data.files.findIndex((f: any) => f.name === pendingSelection.name);
           if (matchIdx !== -1) {
             // Align by adding 1 offset representation for Root ".." file row at top
-            if (pane === 'left') setLeftSelectedIndex(matchIdx + 1);
-            else setRightSelectedIndex(matchIdx + 1);
+            if (pane === 'left') {
+              setLeftSelectedIndex(matchIdx + 1);
+              setLeftSelectedIndices([matchIdx + 1]);
+            } else {
+              setRightSelectedIndex(matchIdx + 1);
+              setRightSelectedIndices([matchIdx + 1]);
+            }
           }
           setPendingSelection(null);
         }
@@ -199,18 +208,25 @@ export default function App() {
           setLeftPath(targetPath);
           setLeftFiles(data.files);
           setLeftSelectedIndex(0);
+          setLeftSelectedIndices([0]);
         } else {
           setRightPath(targetPath);
           setRightFiles(data.files);
           setRightSelectedIndex(0);
+          setRightSelectedIndices([0]);
         }
 
         // Apply pending selection offsets
         if (pendingSelection && pendingSelection.pane === pane) {
           const matchIdx = data.files.findIndex((f: any) => f.name === pendingSelection.name);
           if (matchIdx !== -1) {
-            if (pane === 'left') setLeftSelectedIndex(matchIdx + 1);
-            else setRightSelectedIndex(matchIdx + 1);
+            if (pane === 'left') {
+              setLeftSelectedIndex(matchIdx + 1);
+              setLeftSelectedIndices([matchIdx + 1]);
+            } else {
+              setRightSelectedIndex(matchIdx + 1);
+              setRightSelectedIndices([matchIdx + 1]);
+            }
           }
           setPendingSelection(null);
         }
@@ -449,34 +465,60 @@ export default function App() {
     }
   };
 
+  const getSelectedEntries = (pane: 'left' | 'right') => {
+    const paneFiles = pane === 'left' ? leftFiles : rightFiles;
+    const activeIndices = pane === 'left' ? leftSelectedIndices : rightSelectedIndices;
+    const hoverIndex = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
+
+    const selectedEntries = activeIndices
+      .filter(idx => idx > 0)
+      .map(idx => paneFiles[idx - 1])
+      .filter(Boolean);
+
+    if (selectedEntries.length > 0) {
+      return selectedEntries;
+    }
+
+    if (hoverIndex > 0 && paneFiles[hoverIndex - 1]) {
+      return [paneFiles[hoverIndex - 1]];
+    }
+
+    return [];
+  };
+
   const triggerF5Copy = () => {
     const srcPane = activePane;
     const dstPane = activePane === 'left' ? 'right' : 'left';
 
-    const srcFiles = srcPane === 'left' ? leftFiles : rightFiles;
-    const srcIndex = srcPane === 'left' ? leftSelectedIndex : rightSelectedIndex;
-
-    if (srcIndex === 0) {
-      alert("Please select a file targeting transfer instead of parent root Link");
+    const selectedEntries = getSelectedEntries(srcPane);
+    if (selectedEntries.length === 0) {
+      alert("Please select files/directories to copy instead of the parent root link");
       return;
     }
 
-    const selectedFile = srcFiles[srcIndex - 1];
-    if (!selectedFile) return;
-
     const srcPath = srcPane === 'left' ? leftPath : rightPath;
     const dstPath = dstPane === 'left' ? leftPath : rightPath;
-
     const separator = srcPath.includes("/") ? "/" : "\\";
-    const fullSourcePath = srcPath.endsWith(separator) ? srcPath + selectedFile.name : srcPath + separator + selectedFile.name;
 
-    const isConfirmed = window.confirm(`COPY ACTION: Copy "${selectedFile.name}" recursively into directory "${dstPath}"?`);
+    const fullSourcePaths = selectedEntries.map(file => {
+      return srcPath.endsWith(separator) ? srcPath + file.name : srcPath + separator + file.name;
+    });
+
+    const displayMsg = selectedEntries.length === 1 
+      ? `COPY ACTION: Copy "${selectedEntries[0].name}" recursively into directory "${dstPath}"?`
+      : `COPY ACTION: Copy ${selectedEntries.length} items recursively into directory "${dstPath}"?`;
+
+    const isConfirmed = window.confirm(displayMsg);
     if (!isConfirmed) return;
 
-    triggerTransferJob(srcPane, dstPane, fullSourcePath);
+    triggerTransferJob(srcPane, dstPane, fullSourcePaths);
   };
 
-  const triggerTransferJob = async (srcPane: 'left' | 'right', dstPane: 'left' | 'right', fullSourcePath: string) => {
+  const triggerTransferJob = async (
+    srcPane: 'left' | 'right',
+    dstPane: 'left' | 'right',
+    fullSourcePaths: string[] | string
+  ) => {
     const srcType = srcPane === 'left' ? leftType : rightType;
     const dstType = dstPane === 'left' ? leftType : rightType;
 
@@ -485,16 +527,24 @@ export default function App() {
 
     const targetFolder = dstPane === 'left' ? leftPath : rightPath;
 
+    const sourcePayload: any = {
+      type: srcType,
+      connectionId: srcConnId
+    };
+
+    if (Array.isArray(fullSourcePaths)) {
+      sourcePayload.paths = fullSourcePaths;
+      sourcePayload.path = fullSourcePaths[0] || ""; // fallback
+    } else {
+      sourcePayload.path = fullSourcePaths;
+    }
+
     try {
       const res = await fetch('/api/transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          source: {
-            type: srcType,
-            path: fullSourcePath,
-            connectionId: srcConnId
-          },
+          source: sourcePayload,
           target: {
             type: dstType,
             path: targetFolder,
@@ -538,56 +588,102 @@ export default function App() {
 
   const triggerF6Move = async () => {
     const pane = activePane;
-    const files = pane === 'left' ? leftFiles : rightFiles;
-    const index = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
-
-    if (index === 0) return;
-    const selectedFile = files[index - 1];
-    if (!selectedFile) return;
+    const selectedEntries = getSelectedEntries(pane);
+    if (selectedEntries.length === 0) {
+      alert("Please select files/directories to move/rename");
+      return;
+    }
 
     const basePath = pane === 'left' ? leftPath : rightPath;
     const separator = basePath.includes("/") ? "/" : "\\";
-    const oldFullPath = basePath.endsWith(separator) ? basePath + selectedFile.name : basePath + separator + selectedFile.name;
+    const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
+    const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
-    const responseName = window.prompt(`Rename / Move selection: Enter new relative name or absolute path for "${selectedFile.name}"`, selectedFile.name);
-    if (!responseName) return;
+    if (selectedEntries.length === 1) {
+      const selectedFile = selectedEntries[0];
+      const oldFullPath = basePath.endsWith(separator) ? basePath + selectedFile.name : basePath + separator + selectedFile.name;
 
-    let targetPath = "";
-    if (responseName.includes("/") || responseName.includes("\\")) {
-      targetPath = responseName;
-    } else {
-      targetPath = basePath.endsWith(separator) ? basePath + responseName : basePath + separator + responseName;
-    }
+      const responseName = window.prompt(`Rename / Move selection: Enter new relative name or absolute path for "${selectedFile.name}"`, selectedFile.name);
+      if (!responseName) return;
 
-    try {
-      const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
-      const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
-
-      if (isRemote) {
-        const res = await fetch('/api/ssh/rename', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: connId, oldPath: oldFullPath, newPath: targetPath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed remote SFTP renaming transaction');
-        }
+      let targetPath = "";
+      if (responseName.includes("/") || responseName.includes("\\")) {
+        targetPath = responseName;
       } else {
-        const res = await fetch('/api/local/rename', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ oldPath: oldFullPath, newPath: targetPath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed local volume rename system call');
-        }
+        targetPath = basePath.endsWith(separator) ? basePath + responseName : basePath + separator + responseName;
       }
 
-      triggerRefresh(pane);
-    } catch (err: any) {
-      alert(`F6 Reorganization error: ${err.message}`);
+      try {
+        if (isRemote) {
+          const res = await fetch('/api/ssh/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connectionId: connId, oldPath: oldFullPath, newPath: targetPath })
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Failed remote SFTP renaming transaction');
+          }
+        } else {
+          const res = await fetch('/api/local/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ oldPath: oldFullPath, newPath: targetPath })
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Failed local volume rename system call');
+          }
+        }
+
+        triggerRefresh(pane);
+        triggerRefresh(pane === 'left' ? 'right' : 'left');
+      } catch (err: any) {
+        alert(`F6 Move error: ${err.message}`);
+      }
+    } else {
+      const dstPane = pane === 'left' ? 'right' : 'left';
+      const dstPath = dstPane === 'left' ? leftPath : rightPath;
+      const dstSeparator = dstPath.includes("/") ? "/" : "\\";
+
+      const isConfirmed = window.confirm(`MOVE ACTION: Move ${selectedEntries.length} items to "${dstPath}"?`);
+      if (!isConfirmed) return;
+
+      try {
+        for (const file of selectedEntries) {
+          const oldFullPath = basePath.endsWith(separator) ? basePath + file.name : basePath + separator + file.name;
+          const targetPath = dstPath.endsWith(dstSeparator) ? dstPath + file.name : dstPath + dstSeparator + file.name;
+
+          if (isRemote) {
+            const res = await fetch('/api/ssh/rename', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ connectionId: connId, oldPath: oldFullPath, newPath: targetPath })
+            });
+            if (!res.ok) {
+              const err = await res.json();
+              throw new Error(err.error || `Failed to move remote item "${file.name}"`);
+            }
+          } else {
+            const res = await fetch('/api/local/rename', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ oldPath: oldFullPath, newPath: targetPath })
+            });
+            if (!res.ok) {
+              const err = await res.json();
+              throw new Error(err.error || `Failed to move local item "${file.name}"`);
+            }
+          }
+        }
+
+        triggerRefresh('left');
+        triggerRefresh('right');
+      } catch (err: any) {
+        alert(`Bulk F6 Move error: ${err.message}`);
+        triggerRefresh('left');
+        triggerRefresh('right');
+      }
     }
   };
 
@@ -635,49 +731,53 @@ export default function App() {
 
   const triggerF8Delete = async () => {
     const pane = activePane;
-    const files = pane === 'left' ? leftFiles : rightFiles;
-    const index = pane === 'left' ? leftSelectedIndex : rightSelectedIndex;
+    const selectedEntries = getSelectedEntries(pane);
+    if (selectedEntries.length === 0) {
+      alert("Please select files/directories to delete");
+      return;
+    }
 
-    if (index === 0) return;
-    const selectedFile = files[index - 1];
-    if (!selectedFile) return;
+    const isConfirmed = selectedEntries.length === 1
+      ? window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting "${selectedEntries[0].name}"?`)
+      : window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting ${selectedEntries.length} selected items?`);
+    if (!isConfirmed) return;
 
     const basePath = pane === 'left' ? leftPath : rightPath;
     const separator = basePath.includes("/") ? "/" : "\\";
-    const resolvedPath = basePath.endsWith(separator) ? basePath + selectedFile.name : basePath + separator + selectedFile.name;
-
-    const isConfirmed = window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting "${selectedFile.name}"?`);
-    if (!isConfirmed) return;
+    const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
+    const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
     try {
-      const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
-      const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
+      for (const file of selectedEntries) {
+        const resolvedPath = basePath.endsWith(separator) ? basePath + file.name : basePath + separator + file.name;
 
-      if (isRemote) {
-        const res = await fetch('/api/ssh/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: connId, path: resolvedPath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed remote file node deletion');
-        }
-      } else {
-        const res = await fetch('/api/local/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: resolvedPath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed local file asset removal');
+        if (isRemote) {
+          const res = await fetch('/api/ssh/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connectionId: connId, path: resolvedPath })
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || `Failed to delete remote item "${file.name}"`);
+          }
+        } else {
+          const res = await fetch('/api/local/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: resolvedPath })
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || `Failed to delete local item "${file.name}"`);
+          }
         }
       }
 
       triggerRefresh(pane);
     } catch (err: any) {
       alert(`Removal transaction error: ${err.message}`);
+      triggerRefresh(pane);
     }
   };
 
@@ -868,23 +968,71 @@ export default function App() {
           setActivePane(prev => prev === 'left' ? 'right' : 'left');
           break;
 
-        case "ArrowUp":
+        case "ArrowUp": {
           e.preventDefault();
           if (maxIndex >= 0) {
             const nextIdx = (currentIndex - 1 + (maxIndex + 1)) % (maxIndex + 1);
-            if (pane === 'left') setLeftSelectedIndex(nextIdx);
-            else setRightSelectedIndex(nextIdx);
+            if (pane === 'left') {
+              setLeftSelectedIndex(nextIdx);
+              if (e.shiftKey) {
+                const anchor = leftSelectedIndices.length > 0 ? leftSelectedIndex : nextIdx;
+                const start = Math.max(1, Math.min(anchor, nextIdx));
+                const end = Math.max(1, Math.max(anchor, nextIdx));
+                const range: number[] = [];
+                for (let i = start; i <= end; i++) range.push(i);
+                setLeftSelectedIndices(range);
+              } else {
+                setLeftSelectedIndices([nextIdx]);
+              }
+            } else {
+              setRightSelectedIndex(nextIdx);
+              if (e.shiftKey) {
+                const anchor = rightSelectedIndices.length > 0 ? rightSelectedIndex : nextIdx;
+                const start = Math.max(1, Math.min(anchor, nextIdx));
+                const end = Math.max(1, Math.max(anchor, nextIdx));
+                const range: number[] = [];
+                for (let i = start; i <= end; i++) range.push(i);
+                setRightSelectedIndices(range);
+              } else {
+                setRightSelectedIndices([nextIdx]);
+              }
+            }
           }
           break;
+        }
 
-        case "ArrowDown":
+        case "ArrowDown": {
           e.preventDefault();
           if (maxIndex >= 0) {
             const nextIdx = (currentIndex + 1) % (maxIndex + 1);
-            if (pane === 'left') setLeftSelectedIndex(nextIdx);
-            else setRightSelectedIndex(nextIdx);
+            if (pane === 'left') {
+              setLeftSelectedIndex(nextIdx);
+              if (e.shiftKey) {
+                const anchor = leftSelectedIndices.length > 0 ? leftSelectedIndex : nextIdx;
+                const start = Math.max(1, Math.min(anchor, nextIdx));
+                const end = Math.max(1, Math.max(anchor, nextIdx));
+                const range: number[] = [];
+                for (let i = start; i <= end; i++) range.push(i);
+                setLeftSelectedIndices(range);
+              } else {
+                setLeftSelectedIndices([nextIdx]);
+              }
+            } else {
+              setRightSelectedIndex(nextIdx);
+              if (e.shiftKey) {
+                const anchor = rightSelectedIndices.length > 0 ? rightSelectedIndex : nextIdx;
+                const start = Math.max(1, Math.min(anchor, nextIdx));
+                const end = Math.max(1, Math.max(anchor, nextIdx));
+                const range: number[] = [];
+                for (let i = start; i <= end; i++) range.push(i);
+                setRightSelectedIndices(range);
+              } else {
+                setRightSelectedIndices([nextIdx]);
+              }
+            }
           }
           break;
+        }
 
         case "Backspace":
           e.preventDefault();
@@ -949,6 +1097,8 @@ export default function App() {
     rightFiles,
     leftSelectedIndex,
     rightSelectedIndex,
+    leftSelectedIndices,
+    rightSelectedIndices,
     leftPath,
     rightPath,
     leftType,
@@ -1026,9 +1176,13 @@ export default function App() {
             currentPath={leftPath}
             files={leftFiles}
             selectedIndex={leftSelectedIndex}
+            selectedIndices={leftSelectedIndices}
             focused={activePane === 'left'}
             onFocus={() => setActivePane('left')}
-            onSelect={(idx) => setLeftSelectedIndex(idx)}
+            onSelect={(idx, indices) => {
+              setLeftSelectedIndex(idx);
+              setLeftSelectedIndices(indices);
+            }}
             onNavigate={(path) => handleNavigate('left', path)}
             onRefresh={() => triggerRefresh('left')}
             onToggleType={(newType) => handleTogglePaneType('left', newType)}
@@ -1051,9 +1205,13 @@ export default function App() {
             currentPath={rightPath}
             files={rightFiles}
             selectedIndex={rightSelectedIndex}
+            selectedIndices={rightSelectedIndices}
             focused={activePane === 'right'}
             onFocus={() => setActivePane('right')}
-            onSelect={(idx) => setRightSelectedIndex(idx)}
+            onSelect={(idx, indices) => {
+              setRightSelectedIndex(idx);
+              setRightSelectedIndices(indices);
+            }}
             onNavigate={(path) => handleNavigate('right', path)}
             onRefresh={() => triggerRefresh('right')}
             onToggleType={(newType) => handleTogglePaneType('right', newType)}
