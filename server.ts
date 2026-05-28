@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { Client, SFTPWrapper } from "ssh2";
 import { WebSocketServer, WebSocket } from "ws";
@@ -10,9 +9,6 @@ import * as pty from "node-pty";
 import type { IncomingMessage } from "http";
 import AdmZip from "adm-zip";
 import * as tar from "tar";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
