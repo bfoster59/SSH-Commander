@@ -9,6 +9,7 @@ Commander. For a short overview, see [README.md](README.md).
 2. [Installation](#2-installation)
 3. [Launching the app](#3-launching-the-app)
 4. [Interface overview](#4-interface-overview)
+   - [Working with tabs](#working-with-tabs)
 5. [Switching a pane: Local vs SSH](#5-switching-a-pane-local-vs-ssh)
 6. [Connecting to a remote server](#6-connecting-to-a-remote-server)
 7. [Navigating files](#7-navigating-files)
@@ -67,6 +68,7 @@ Then open **http://localhost:3000**.
 ┌─ SSH_COMMANDER ──────────────────────[ CONNECT SSH ][ RECURSIVE SEARCH ]──☀/🌙─┐
 │ ACTIVE HOST: …            SESSION: 00:00:00                                     │
 ├───────────────────────────────────┬────────────────────────────────────────────┤
+│ [local: project ×][+]             │ [ssh prod:/etc ×][local: D:\ ×][+]         │
 │ ▾ Local Filesystem            ⟳   │ ▾ SSH / SFTP server               ⟳        │
 │ PATH  c:\…\project             ↑  │ PATH  /home/user                    ↑      │
 │ PRESETS  C:\ D:\ …                │ PRESETS …                                  │
@@ -83,11 +85,27 @@ Then open **http://localhost:3000**.
 
 - **Top bar:** brand, `CONNECT SSH`, `RECURSIVE SEARCH`, live host/session info,
   and the **theme toggle** (☀/🌙).
-- **Two panes:** each has a type dropdown, refresh (⟳), an editable **PATH** bar,
-  a **Go Up** (↑) button, drive/preset shortcuts, the file table, a status line,
-  and a **`CMD:`** command bar.
+- **Two panes:** each has a **tab strip**, a type dropdown, refresh (⟳), an
+  editable **PATH** bar, a **Go Up** (↑) button, drive/preset shortcuts, the file
+  table, a status line, and a **`CMD:`** command bar.
 - **Function-key bar** at the bottom mirrors the `F3`–`F10` actions.
 - The **active pane** is highlighted; click a pane or press `Tab` to switch.
+
+### Working with tabs
+
+Each pane has its own **tab strip** at the top, so you can keep several
+directories — and several remote hosts — open at once on the same side.
+
+- **New tab:** click **`+`** on the strip. A new tab opens on the local
+  filesystem; switch it to SSH or connect from it as usual.
+- **Switch tab:** click a tab. Its location, listing, selection, and SSH
+  connection are **preserved** — nothing reloads or disconnects.
+- **Close tab:** click the **`×`** on the tab. If it was a remote tab, its SSH
+  session is disconnected automatically. A side always keeps at least one tab.
+- A green dot marks a **remote** tab; a grey dot marks a **local** tab. The tab
+  label shows the host (or "local") and the current folder.
+- Copy/move/drag and all function keys act on the **active tab** of each side, so
+  you can park multiple remotes in tabs and transfer between whichever two are focused.
 
 ## 5. Switching a pane: Local vs SSH
 
@@ -136,14 +154,16 @@ The **`[ .. ]`** row is always present (even in empty folders) so you can always
 
 Select a file and press **`F3`** (or double-click it). The viewer auto-detects type:
 
-- **Text** — scrollable with line numbers and a **Find** box.
+- **Text / code** — **syntax highlighted** (language detected from the file
+  extension), scrollable with line numbers and a **Find** box.
 - **Images** (`png/jpg/gif/webp/svg/…`), **PDF**, **video**, **audio** — rendered inline.
 
 Close with the **✕** button.
 
 ## 10. Editing files (F4)
 
-Select a text file and press **`F4`**. Edit the contents and **Save**; changes are
+Select a text file and press **`F4`**. The editor shows **syntax highlighting** as
+you type. Edit the contents and **Save** (button or **`Ctrl+S`**); changes are
 written back to the local file or the remote server over SFTP.
 
 ## 11. Copying, moving & renaming

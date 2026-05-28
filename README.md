@@ -13,6 +13,8 @@ support, a multi-format file viewer, and a light/dark theme.
 
 - **Dual panes** — each pane independently browses the **local filesystem** or a
   **remote SSH/SFTP** server.
+- **Tabs per side** — open multiple tabs in each pane (local dirs and/or remote
+  hosts at once); switching tabs preserves each tab's location and connection.
 - **Connection manager** — saved profiles in `~/.ssh-commander/profiles.json`
   (**passwords are never written to disk** — entered at connect time).
 - **Authentication** — password or **private-key file** (with optional passphrase).
@@ -25,8 +27,10 @@ support, a multi-format file viewer, and a light/dark theme.
   running in the background.
 - **Per-pane `CMD:` bar** — type a command, press Enter, and it runs in that
   pane's current directory (opens the terminal).
-- **File viewer** — text (with find + line numbers), **images, PDF, audio, video**.
-- **File editor** — open, edit, and save text files (local or remote).
+- **File viewer** — text with **syntax highlighting**, find + line numbers, plus
+  **images, PDF, audio, video**.
+- **File editor** — open, edit (with syntax highlighting), and save text files
+  (local or remote).
 - **Archives** — **Compress** a selection to `.zip` or `.tar.gz`, and
   **Extract** an archive in place.
 - **Recursive search** — `Alt+F7` searches the active directory tree.

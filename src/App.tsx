@@ -11,7 +11,7 @@ import ConnectionDialog from "./components/ConnectionDialog";
 import FileViewer from "./components/FileViewer";
 import FileEditor from "./components/FileEditor";
 import TerminalModal from "./components/TerminalModal";
-import { useFilePane } from "./hooks/useFilePane";
+import { usePaneSide, PaneTab } from "./hooks/useFilePane";
 import {
   Search,
   Loader2,
@@ -50,10 +50,11 @@ export default function App() {
     return `${pad(h)}:${pad(m)}:${pad(s)}`;
   };
 
-  const leftPane = useFilePane();
-  const rightPane = useFilePane();
+  const leftPane = usePaneSide();
+  const rightPane = usePaneSide();
 
-  // Legacy flat aliases — the rest of this file predates useFilePane
+  // Flat aliases derived from each side's ACTIVE tab — keeps the rest of the
+  // file (which predates tabs) working unchanged.
   const {
     type: leftType, setType: setLeftType,
     path: leftPath,
@@ -142,16 +143,24 @@ export default function App() {
     if (pane === 'left') setLeftCmdInput(""); else setRightCmdInput("");
   };
 
-  // Load initial environment folder context
+  // Load a side's active tab the first time it becomes active (initial mount
+  // and any freshly-opened tab). Already-loaded tabs are left untouched so
+  // switching tabs preserves their listing/selection/connection.
   useEffect(() => {
-    const initWorkspace = async () => {
-        Promise.all([
-            handleNavigate('left', '.'),
-            handleNavigate('right', '.')
-        ]);
-    };
-    initWorkspace();
-  }, [leftPane.setPath, leftPane.setFiles, rightPane.setPath, rightPane.setFiles]);
+    if (!leftPane.loaded) {
+      leftPane.setLoaded(true);
+      handleNavigate('left', leftPane.path, { type: leftPane.type, connectionId: leftPane.connectionId });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftPane.activeId]);
+
+  useEffect(() => {
+    if (!rightPane.loaded) {
+      rightPane.setLoaded(true);
+      handleNavigate('right', rightPane.path, { type: rightPane.type, connectionId: rightPane.connectionId });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rightPane.activeId]);
 
   // Enumerate local storage volumes for the drive bar
   useEffect(() => {
@@ -1242,6 +1251,68 @@ export default function App() {
     return 'ubuntu@dev-server-01:22';
   };
 
+  const tabLabel = (t: PaneTab) => {
+    const trimmed = t.path.replace(/[\\/]+$/, '');
+    const base = trimmed.split(/[\\/]/).pop() || t.path;
+    const prefix = t.type === 'remote' ? (t.connectionName || 'ssh') : 'local';
+    return `${prefix}: ${base || '/'}`;
+  };
+
+  const handleCloseTab = (side: 'left' | 'right', tab: PaneTab) => {
+    const pane = side === 'left' ? leftPane : rightPane;
+    if (tab.type === 'remote' && tab.connectionId) {
+      fetch('/api/ssh/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId: tab.connectionId })
+      }).catch(() => { /* best-effort */ });
+    }
+    pane.closeTab(tab.id);
+  };
+
+  const renderTabStrip = (side: 'left' | 'right') => {
+    const pane = side === 'left' ? leftPane : rightPane;
+    return (
+      <div
+        className="flex items-stretch gap-1 px-1.5 pt-1.5 bg-[var(--color-panel)] border-b border-[var(--color-border)] overflow-x-auto shrink-0"
+        onClick={() => setActivePane(side)}
+      >
+        {pane.tabs.map(t => {
+          const isActive = t.id === pane.activeId;
+          return (
+            <div
+              key={t.id}
+              onClick={() => { setActivePane(side); pane.selectTab(t.id); }}
+              title={t.path}
+              className={`group flex items-center gap-1.5 px-2 py-1 rounded-t text-[10px] font-mono cursor-pointer max-w-[180px] shrink-0 border border-b-0 transition-colors ${
+                isActive
+                  ? 'bg-[var(--color-surface)] text-[var(--color-content)] border-[var(--color-border)]'
+                  : 'bg-[var(--color-base)] text-[var(--color-muted)] border-transparent hover:text-[var(--color-content)]'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.type === 'remote' ? 'bg-[#40C057]' : 'bg-[#5C5F66]'}`} />
+              <span className="truncate">{tabLabel(t)}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleCloseTab(side, t); }}
+                className="ml-0.5 text-[var(--color-muted)] hover:text-[#FF6B6B] shrink-0 opacity-60 group-hover:opacity-100 cursor-pointer"
+                title="Close tab"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+        <button
+          onClick={(e) => { e.stopPropagation(); setActivePane(side); pane.addTab(); }}
+          className="px-2 py-1 text-[12px] font-bold text-[var(--color-muted)] hover:text-[#339AF0] shrink-0 cursor-pointer"
+          title="New tab"
+        >
+          +
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-screen w-full bg-[var(--color-base)] text-[var(--color-content)] font-sans overflow-hidden" id="dashboard-root">
       {/* Top Navigation & Host Selector */}
@@ -1300,6 +1371,7 @@ export default function App() {
           className={`flex-1 flex flex-col rounded overflow-hidden relative transition-all duration-150 ${activePane === 'left' ? 'ring-1 ring-[#339AF0]/30 shadow-[0_0_12px_rgba(51,154,240,0.1)]' : ''}`}
           onClick={() => setActivePane('left')}
         >
+          {renderTabStrip('left')}
           <FileTable
             id="left"
             type={leftType}
@@ -1350,6 +1422,7 @@ export default function App() {
           className={`flex-1 flex flex-col rounded overflow-hidden relative transition-all duration-150 ${activePane === 'right' ? 'ring-1 ring-[#339AF0]/30 shadow-[0_0_12px_rgba(51,154,240,0.1)]' : ''}`}
           onClick={() => setActivePane('right')}
         >
+          {renderTabStrip('right')}
           <FileTable
             id="right"
             type={rightType}
