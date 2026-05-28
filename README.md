@@ -1,68 +1,98 @@
 # SSH Commander
 
 A web-based, dual-pane file manager in the spirit of Total Commander — with a
-real local filesystem pane, secure remote SSH/SFTP browsing, an interactive
-terminal (local shells + remote SSH), and a built-in multi-format file viewer.
+local filesystem pane, secure remote **SSH/SFTP** browsing, an interactive
+terminal (local shells *and* remote SSH), drag-and-drop transfers, archive
+support, a multi-format file viewer, and a light/dark theme.
+
+> For step-by-step usage of every feature, see **[WORK_INSTRUCTIONS.md](WORK_INSTRUCTIONS.md)**.
+
+---
 
 ## Features
 
-- Dual-pane layout with keyboard-driven navigation (F3 view, F4 edit, F5 copy,
-  F6 move, F7 mkdir, F8 delete, F10 disconnect)
-- Local filesystem and remote **SSH/SFTP** browsing in either pane
-- Saved connection profiles (stored on the host in `~/.ssh-commander/profiles.json`;
-  passwords are never written to disk)
-- Password or **private-key-file** authentication
-- Interactive terminal per pane (PowerShell / pwsh / cmd / bash locally, or a
-  remote SSH shell) that can be **minimized** while it keeps running
-- Per-pane `CMD:` command bar
-- Drag-and-drop transfers between panes
-- File viewer for text, images, PDFs, audio, and video
-- Recursive search, multi-file selection, light/dark theme toggle
+- **Dual panes** — each pane independently browses the **local filesystem** or a
+  **remote SSH/SFTP** server.
+- **Connection manager** — saved profiles in `~/.ssh-commander/profiles.json`
+  (**passwords are never written to disk** — entered at connect time).
+- **Authentication** — password or **private-key file** (with optional passphrase).
+- **Keyboard-driven** — Total Commander style function keys: `F3` View, `F4` Edit,
+  `F5` Copy, `F6` Move/Rename, `F7` Mkdir, `F8` Delete, `F10` Disconnect.
+- **Transfers** — copy/move within or between panes, **drag-and-drop**, and a
+  live progress widget. Local ⇄ remote ⇄ remote all supported.
+- **Interactive terminal** — per pane; local **PowerShell / pwsh / cmd / bash**
+  (selectable) or a remote **SSH shell**. Can be **minimized** while it keeps
+  running in the background.
+- **Per-pane `CMD:` bar** — type a command, press Enter, and it runs in that
+  pane's current directory (opens the terminal).
+- **File viewer** — text (with find + line numbers), **images, PDF, audio, video**.
+- **File editor** — open, edit, and save text files (local or remote).
+- **Archives** — **Compress** a selection to `.zip` or `.tar.gz`, and
+  **Extract** an archive in place.
+- **Recursive search** — `Alt+F7` searches the active directory tree.
+- **Sorting** — click column headers (Name / Size / Modified).
+- **Light / dark theme** — toggle in the top bar (remembered across sessions).
+
+---
 
 ## Prerequisites
 
-- **Node.js 18 or newer** (developed on Node 24). Includes `npm`.
-- **A C/C++ build toolchain** — required because `node-pty` (the interactive
-  terminal) is a native module that may need to compile if no prebuilt binary
-  is available for your platform:
-  - **Windows:** install the
-    [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-    ("Desktop development with C++" workload). Python 3 is also recommended.
+- **Node.js 18 or newer** (developed on Node 24). `npm` ships with Node.
+- **A C/C++ build toolchain** — the interactive terminal uses `node-pty`, a
+  native module that may need to compile during `npm install` if no prebuilt
+  binary exists for your platform:
+  - **Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+    with the **"Desktop development with C++"** workload (Python 3 recommended).
   - **macOS:** `xcode-select --install`
-  - **Linux:** `sudo apt-get install build-essential python3` (or your distro's
-    equivalent)
-- For remote features: an SSH/SFTP server you can reach, and either its password
-  or a private key file on the machine running SSH Commander.
+  - **Linux (Debian/Ubuntu):** `sudo apt-get install build-essential python3`
+- **For remote features:** an SSH/SFTP server you can reach, plus its password or
+  a private key file located **on the machine running SSH Commander**.
+- **For remote ZIP archives:** the remote host needs `zip` / `unzip` installed.
+  `.tar.gz` only needs `tar` (universally available).
 
-## Install & run
+---
+
+## Installation
 
 ```bash
-# 1. Install dependencies (this also builds node-pty)
-npm install
-
-# 2. Start the dev server
-npm run dev
-
-# 3. Open the app
-#    http://localhost:3000
+# Clone, then from the project directory:
+npm install        # installs dependencies and builds node-pty
 ```
 
-### Production build
+## Running (development)
 
 ```bash
-npm run build   # bundles the client and the server
-npm run start   # runs the bundled server from dist/
+npm run dev        # starts the server on http://localhost:3000
+```
+
+Open **http://localhost:3000** in your browser.
+
+## Production build
+
+```bash
+npm run build      # bundles the client (vite) and the server (esbuild)
+npm run start      # runs the bundled server from dist/
 ```
 
 ## Configuration
 
-No environment variables are required. See [.env.example](.env.example) for the
-optional `DISABLE_HMR` flag.
+No environment variables are required. See [.env.example](.env.example):
 
-## Notes
+| Variable      | Purpose                                                        |
+| ------------- | -------------------------------------------------------------- |
+| `DISABLE_HMR` | Set to `true` to turn off Vite hot-reload / file watching.     |
 
-- Connection profiles live in `~/.ssh-commander/profiles.json`. Credentials
-  (passwords / key passphrases) are entered at connect time and are **not**
-  persisted.
+The server listens on **port 3000**.
+
+---
+
+## Security & data notes
+
+- Connection profiles are stored at `~/.ssh-commander/profiles.json` and contain
+  **no secrets** — host, port, username, auth type, and key file path only.
+- Passwords and key passphrases are entered at connect time and held **in memory
+  only** for the life of the SSH session.
 - Private keys are read from a path on the machine running SSH Commander; `~`
   expands to that machine's home directory.
+- SSH Commander exposes local-filesystem and shell access through the browser.
+  Run it on a trusted machine/network; it is not hardened for public exposure.
