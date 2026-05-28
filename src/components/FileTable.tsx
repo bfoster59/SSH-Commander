@@ -14,8 +14,12 @@ import {
   Edit,
   Copy,
   ArrowRightLeft,
-  Trash2
+  Trash2,
+  Package,
+  PackageOpen
 } from "lucide-react";
+
+const isArchiveName = (n: string) => /\.(zip|tar\.gz|tgz)$/i.test(n);
 
 interface FileTableProps {
   id: 'left' | 'right';
@@ -44,6 +48,8 @@ interface FileTableProps {
   onF6Move?: () => void;
   onF8Delete?: () => void;
   onOpenTerminal?: (path: string) => void;
+  onCompress?: () => void;
+  onExtract?: (entry: FileEntry) => void;
 }
 
 export default function FileTable({
@@ -72,6 +78,8 @@ export default function FileTable({
   onF6Move,
   onF8Delete,
   onOpenTerminal,
+  onCompress,
+  onExtract,
 }: FileTableProps) {
   const [isEditingPath, setIsEditingPath] = useState(false);
   const [draftPath, setDraftPath] = useState(currentPath);
@@ -270,23 +278,23 @@ export default function FileTable({
 
   return (
     <div 
-      className={`flex-1 flex flex-col border rounded bg-[#1A1B1E] overflow-hidden min-w-0 font-mono transition-all duration-200 ${
+      className={`flex-1 flex flex-col border rounded bg-[var(--color-surface)] overflow-hidden min-w-0 font-mono transition-all duration-200 ${
         focused 
           ? "border-[#339AF0] shadow-[0_0_15px_rgba(51,154,240,0.15)] ring-1 ring-[#339AF0]/20" 
-          : "border-[#2C2E33]"
+          : "border-[var(--color-border)]"
       }`}
       onClick={onFocus}
       id={`pane-${id}`}
     >
       
       {/* 1. Header ribbon: State toggle and selection */}
-      <div className="bg-[#14161A] px-3.5 py-2.5 border-b border-[#2C2E33] flex flex-wrap gap-2 justify-between items-center shrink-0">
+      <div className="bg-[var(--color-panel)] px-3.5 py-2.5 border-b border-[var(--color-border)] flex flex-wrap gap-2 justify-between items-center shrink-0">
         <div className="flex items-center gap-2">
           {/* Component switcher */}
            <select
             value={type}
             onChange={(e) => onToggleType(e.target.value as 'local' | 'remote')}
-            className="text-xs p-1.5 rounded font-sans font-bold border border-[#2C2E33] bg-[#1A1B1E] text-[#C1C2C5] focus:outline-none focus:border-[#339AF0]"
+            className="text-xs p-1.5 rounded font-sans font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0]"
           >
             <option value="local">📁 Local Filesystem</option>
             <option value="remote">🌐 SSH / SFTP server</option>
@@ -308,7 +316,7 @@ export default function FileTable({
               e.stopPropagation();
               onRefresh();
             }}
-            className="p-1.5 hover:bg-[#2C2E33] rounded bg-[#1C1F22] text-[#C1C2C5] hover:text-white border border-[#2C2E33] transition-colors cursor-pointer"
+            className="p-1.5 hover:bg-[var(--color-border)] rounded bg-[var(--color-surface)] text-[var(--color-content)] hover:text-white border border-[var(--color-border)] transition-colors cursor-pointer"
             title="Refresh list"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -320,9 +328,9 @@ export default function FileTable({
       <div className={`p-2 shrink-0 flex items-center gap-1.5 justify-start text-[11px] border-b ${
         focused 
           ? "bg-[#339AF0] border-[#339AF0] text-white" 
-          : "bg-[#2C2E33] border-[#2C2E33] text-[#C1C2C5]"
+          : "bg-[var(--color-border)] border-[var(--color-border)] text-[var(--color-content)]"
       }`}>
-        <span className="font-sans font-bold select-none text-[9px] uppercase px-1.5 py-0.5 rounded bg-[#14161A] border border-[#2C2E33] opacity-80 shrink-0 text-slate-400">
+        <span className="font-sans font-bold select-none text-[9px] uppercase px-1.5 py-0.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] opacity-80 shrink-0 text-slate-400">
           Path
         </span>
 
@@ -332,7 +340,7 @@ export default function FileTable({
               type="text"
               value={draftPath}
               onChange={e => setDraftPath(e.target.value)}
-              className="flex-1 bg-[#14161A] text-xs px-2 py-0.5 rounded border border-[#2C2E33] focus:outline-none focus:border-[#339AF0] font-mono text-white"
+              className="flex-1 bg-[var(--color-panel)] text-xs px-2 py-0.5 rounded border border-[var(--color-border)] focus:outline-none focus:border-[#339AF0] font-mono text-white"
               autoFocus
               onBlur={() => setTimeout(() => setIsEditingPath(false), 200)}
             />
@@ -349,7 +357,7 @@ export default function FileTable({
 
         <button
           onClick={goUp}
-          className="p-1 bg-[#14161A] text-[#C1C2C5] hover:text-white rounded border border-[#2C2E33] shrink-0 select-none hover:bg-[#1A1B1E] transition-colors cursor-pointer"
+          className="p-1 bg-[var(--color-panel)] text-[var(--color-content)] hover:text-white rounded border border-[var(--color-border)] shrink-0 select-none hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
           title="Go Up (Backspace)"
         >
           <ArrowUp className="w-3.5 h-3.5" />
@@ -357,8 +365,8 @@ export default function FileTable({
       </div>
 
       {/* 3. Storage drives & Preset shortcuts bookmarks */}
-      <div className="bg-[#14161A] px-2 py-1 border-b border-[#2C2E33] flex gap-2 overflow-x-auto shrink-0 select-none scrollbar-none">
-        <span className="text-[10px] text-[#5C5F66] flex items-center gap-0.5 uppercase tracking-wide font-sans shrink-0 border-r border-[#2C2E33] pr-2">
+      <div className="bg-[var(--color-panel)] px-2 py-1 border-b border-[var(--color-border)] flex gap-2 overflow-x-auto shrink-0 select-none scrollbar-none">
+        <span className="text-[10px] text-[var(--color-muted)] flex items-center gap-0.5 uppercase tracking-wide font-sans shrink-0 border-r border-[var(--color-border)] pr-2">
           <BookMarked className="w-3 h-3 text-[#339AF0]" />
           Presets
         </span>
@@ -375,7 +383,7 @@ export default function FileTable({
                     className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-0.5 transition-colors cursor-pointer ${
                       isActive
                         ? "bg-[#339AF0] text-white border border-[#339AF0]"
-                        : "bg-[#1A1B1E] border border-[#2C2E33] text-[#C1C2C5] hover:text-white hover:bg-[#2C2E33]"
+                        : "bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-content)] hover:text-white hover:bg-[var(--color-border)]"
                     }`}
                   >
                     <HardDrive className="w-2.5 h-2.5" />
@@ -387,13 +395,13 @@ export default function FileTable({
               <>
                 <button
                   onClick={() => onNavigate("/")}
-                  className="px-2 py-0.5 rounded bg-[#1A1B1E] border border-[#2C2E33] hover:bg-[#2C2E33] text-[10px] text-[#C1C2C5] hover:text-white shrink-0 cursor-pointer"
+                  className="px-2 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-border)] text-[10px] text-[var(--color-content)] hover:text-white shrink-0 cursor-pointer"
                 >
                   Container Root (/)
                 </button>
                 <button
                   onClick={() => onNavigate(process.cwd())}
-                  className="px-2 py-0.5 rounded bg-[#1A1B1E] border border-[#2C2E33] hover:bg-[#2C2E33] text-[10px] text-[#C1C2C5] hover:text-white shrink-0 cursor-pointer"
+                  className="px-2 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-border)] text-[10px] text-[var(--color-content)] hover:text-white shrink-0 cursor-pointer"
                 >
                   Workspace
                 </button>
@@ -401,7 +409,7 @@ export default function FileTable({
             )}
           </>
         ) : (
-          <span className="text-[10px] text-[#5C5F66] italic shrink-0 font-sans">
+          <span className="text-[10px] text-[var(--color-muted)] italic shrink-0 font-sans">
             Browsing mapped remote directory tree
           </span>
         )}
@@ -412,70 +420,70 @@ export default function FileTable({
           ref={tableRef}
           onDragOver={handlePaneDragOver}
           onDrop={handlePaneDrop}
-          className="flex-1 overflow-y-auto select-none bg-[#1A1B1E]"
+          className="flex-1 overflow-y-auto select-none bg-[var(--color-surface)]"
         >
           <table className="w-full text-left text-[11px] font-mono border-collapse table-fixed">
             {/* Table Header */}
-            <thead className="bg-[#14161A] text-[#5C5F66] uppercase text-[10px] tracking-wide sticky top-0 border-b border-[#2C2E33] z-10 select-none">
+            <thead className="bg-[var(--color-panel)] text-[var(--color-muted)] uppercase text-[10px] tracking-wide sticky top-0 border-b border-[var(--color-border)] z-10 select-none">
               <tr>
                 <th 
                   onClick={() => onSort?.('name')}
-                  className="py-2.5 px-3 w-1/2 min-w-[200px] font-normal cursor-pointer hover:bg-[#25262B] hover:text-white transition-all select-none group"
+                  className="py-2.5 px-3 w-1/2 min-w-[200px] font-normal cursor-pointer hover:bg-[var(--color-hover)] hover:text-white transition-all select-none group"
                 >
                   <span className="flex items-center gap-1.5 justify-start">
                     <span>NAME</span>
                     {sortField === 'name' ? (
                       sortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-[#339AF0]" /> : <ArrowDown className="w-3 h-3 text-[#339AF0]" />
                     ) : (
-                      <span className="text-[10px] text-[#5C5F66] opacity-0 group-hover:opacity-100 transition-opacity font-sans">⇅</span>
+                      <span className="text-[10px] text-[var(--color-muted)] opacity-0 group-hover:opacity-100 transition-opacity font-sans">⇅</span>
                     )}
                   </span>
                 </th>
                 <th 
                   onClick={() => onSort?.('size')}
-                  className="py-2.5 px-3 w-1/6 min-w-[80px] font-normal cursor-pointer hover:bg-[#25262B] hover:text-[#C1C2C5] transition-all select-none group"
+                  className="py-2.5 px-3 w-1/6 min-w-[80px] font-normal cursor-pointer hover:bg-[var(--color-hover)] hover:text-[var(--color-content)] transition-all select-none group"
                 >
                   <span className="flex items-center gap-1.5 justify-end">
                     <span>SIZE</span>
                     {sortField === 'size' ? (
                       sortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-[#339AF0]" /> : <ArrowDown className="w-3 h-3 text-[#339AF0]" />
                     ) : (
-                      <span className="text-[10px] text-[#5C5F66] opacity-0 group-hover:opacity-100 transition-opacity font-sans">⇅</span>
+                      <span className="text-[10px] text-[var(--color-muted)] opacity-0 group-hover:opacity-100 transition-opacity font-sans">⇅</span>
                     )}
                   </span>
                 </th>
-                <th className="py-2.5 px-3 w-1/6 text-center min-w-[80px] font-normal text-[#5C5F66] select-none">
+                <th className="py-2.5 px-3 w-1/6 text-center min-w-[80px] font-normal text-[var(--color-muted)] select-none">
                   PERMS
                 </th>
                 <th 
                   onClick={() => onSort?.('modified')}
-                  className="py-2.5 px-3 w-1/6 min-w-[120px] font-normal cursor-pointer hover:bg-[#25262B] hover:text-[#C1C2C5] transition-all select-none group"
+                  className="py-2.5 px-3 w-1/6 min-w-[120px] font-normal cursor-pointer hover:bg-[var(--color-hover)] hover:text-[var(--color-content)] transition-all select-none group"
                 >
                   <span className="flex items-center gap-1.5 justify-end">
                     <span>MODIFIED</span>
                     {sortField === 'modified' ? (
                       sortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-[#339AF0]" /> : <ArrowDown className="w-3 h-3 text-[#339AF0]" />
                     ) : (
-                      <span className="text-[10px] text-[#5C5F66] opacity-0 group-hover:opacity-100 transition-opacity font-sans">⇅</span>
+                      <span className="text-[10px] text-[var(--color-muted)] opacity-0 group-hover:opacity-100 transition-opacity font-sans">⇅</span>
                     )}
                   </span>
                 </th>
               </tr>
             </thead>
   
-            <tbody className="divide-y divide-[#25262B]">
+            <tbody className="divide-y divide-[var(--color-hover)]">
               {visualFiles.map((entry, index) => {
                   const isSelected = selectedIndex === index;
                   const isMultiSelected = selectedIndices.includes(index);
   
                   // Construct clean classNames
-                  let rowBgClass = "text-[#C1C2C5] hover:bg-[#25262B]";
+                  let rowBgClass = "text-[var(--color-content)] hover:bg-[var(--color-hover)]";
                   if (isMultiSelected) {
                     rowBgClass = focused 
                       ? "bg-[#339AF0]/25 text-white font-semibold" 
-                      : "bg-[#25262B]/80 text-white font-medium";
+                      : "bg-[var(--color-hover)]/80 text-white font-medium";
                   } else if (isSelected) {
-                    rowBgClass = "bg-[#2C2E33]/40 text-white";
+                    rowBgClass = "bg-[var(--color-border)]/40 text-white";
                   }
   
                   // High-visibility focus cursor
@@ -502,7 +510,7 @@ export default function FileTable({
                           ) : entry.isDirectory ? (
                             <Folder className="w-3.5 h-3.5 text-[#339AF0] shrink-0" />
                           ) : (
-                            <File className="w-3.5 h-3.5 text-[#5C5F66] shrink-0" />
+                            <File className="w-3.5 h-3.5 text-[var(--color-muted)] shrink-0" />
                           )}
                           <span className="truncate">{entry.name}</span>
                         </span>
@@ -530,7 +538,7 @@ export default function FileTable({
         </div>
 
       {/* Panel status row statistics */}
-      <div className="bg-[#14161A] px-3 py-1.5 border-t border-[#2C2E33] text-[10px] text-[#5C5F66] flex justify-between tracking-wide select-none">
+      <div className="bg-[var(--color-panel)] px-3 py-1.5 border-t border-[var(--color-border)] text-[10px] text-[var(--color-muted)] flex justify-between tracking-wide select-none">
         <span>Files: {files.filter(f => !f.isDirectory).length} | Dirs: {files.filter(f => f.isDirectory).length}</span>
         {(() => {
           const actualSelectedCount = selectedIndices.filter(i => i > 0).length;
@@ -571,59 +579,85 @@ export default function FileTable({
             }}
           />
           <div
-            className="fixed z-[100] bg-[#14161A] border border-[#2C2E33] rounded shadow-[0_10px_30px_rgba(0,0,0,0.6)] py-1.5 min-w-[200px] font-sans text-xs text-[#C1C2C5]"
+            className="fixed z-[100] bg-[var(--color-panel)] border border-[var(--color-border)] rounded shadow-[0_10px_30px_rgba(0,0,0,0.6)] py-1.5 min-w-[200px] font-sans text-xs text-[var(--color-content)]"
             style={{
               top: `${contextMenu.y}px`,
               left: `${contextMenu.x}px`,
             }}
           >
-            <div className="px-3 py-1 text-[10px] text-[#5C5F66] font-semibold border-b border-[#25262B] mb-1 truncate max-w-[280px]">
+            <div className="px-3 py-1 text-[10px] text-[var(--color-muted)] font-semibold border-b border-[var(--color-hover)] mb-1 truncate max-w-[280px]">
               {contextMenu.entry.name.toUpperCase()}
             </div>
             
             <button
               onClick={() => handleMenuAction(onF3View)}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[#25262B] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
+              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-hover)] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
             >
               <span className="flex items-center gap-2">
-                <Eye className="w-3.5 h-3.5 text-[#5C5F66] group-hover:text-[#339AF0]" />
+                <Eye className="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[#339AF0]" />
                 <span>View File</span>
               </span>
-              <span className="font-mono text-[9px] text-[#5C5F66] bg-[#1A1B1E] px-1 py-0.5 rounded">F3</span>
+              <span className="font-mono text-[9px] text-[var(--color-muted)] bg-[var(--color-surface)] px-1 py-0.5 rounded">F3</span>
             </button>
 
             <button
               onClick={() => handleMenuAction(onF4Edit)}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[#25262B] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
+              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-hover)] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
             >
               <span className="flex items-center gap-2">
-                <Edit className="w-3.5 h-3.5 text-[#5C5F66] group-hover:text-[#339AF0]" />
+                <Edit className="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[#339AF0]" />
                 <span>Edit File</span>
               </span>
-              <span className="font-mono text-[9px] text-[#5C5F66] bg-[#1A1B1E] px-1 py-0.5 rounded">F4</span>
+              <span className="font-mono text-[9px] text-[var(--color-muted)] bg-[var(--color-surface)] px-1 py-0.5 rounded">F4</span>
             </button>
 
             <button
               onClick={() => handleMenuAction(onF5Copy)}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[#25262B] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
+              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-hover)] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
             >
               <span className="flex items-center gap-2">
-                <Copy className="w-3.5 h-3.5 text-[#5C5F66] group-hover:text-[#339AF0]" />
+                <Copy className="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[#339AF0]" />
                 <span>Copy Item</span>
               </span>
-              <span className="font-mono text-[9px] text-[#5C5F66] bg-[#1A1B1E] px-1 py-0.5 rounded">F5</span>
+              <span className="font-mono text-[9px] text-[var(--color-muted)] bg-[var(--color-surface)] px-1 py-0.5 rounded">F5</span>
             </button>
 
             <button
               onClick={() => handleMenuAction(onF6Move)}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[#25262B] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
+              className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-hover)] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
             >
               <span className="flex items-center gap-2">
-                <ArrowRightLeft className="w-3.5 h-3.5 text-[#5C5F66] group-hover:text-[#339AF0]" />
+                <ArrowRightLeft className="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[#339AF0]" />
                 <span>Move / Rename</span>
               </span>
-              <span className="font-mono text-[9px] text-[#5C5F66] bg-[#1A1B1E] px-1 py-0.5 rounded">F6</span>
+              <span className="font-mono text-[9px] text-[var(--color-muted)] bg-[var(--color-surface)] px-1 py-0.5 rounded">F6</span>
             </button>
+
+            {onCompress && (
+              <button
+                onClick={() => handleMenuAction(() => onCompress())}
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-hover)] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none border-t border-[var(--color-hover)]/50"
+              >
+                <span className="flex items-center gap-2">
+                  <Package className="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[#339AF0]" />
+                  <span>Compress…</span>
+                </span>
+                <span className="font-mono text-[9px] text-[var(--color-muted)] bg-[var(--color-surface)] px-1 py-0.5 rounded">Zip</span>
+              </button>
+            )}
+
+            {onExtract && contextMenu && !contextMenu.entry.isDirectory && isArchiveName(contextMenu.entry.name) && (
+              <button
+                onClick={() => handleMenuAction(() => { if (contextMenu) onExtract(contextMenu.entry); })}
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-hover)] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none"
+              >
+                <span className="flex items-center gap-2">
+                  <PackageOpen className="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[#339AF0]" />
+                  <span>Extract here</span>
+                </span>
+                <span className="font-mono text-[9px] text-[var(--color-muted)] bg-[var(--color-surface)] px-1 py-0.5 rounded">Unzip</span>
+              </button>
+            )}
 
             {onOpenTerminal && (
               <button
@@ -636,17 +670,17 @@ export default function FileTable({
                     onOpenTerminal(initialPath);
                   }
                 })}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[#25262B] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none border-t border-[#25262B]/50"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-[var(--color-hover)] hover:text-white group transition-colors cursor-pointer border-none bg-transparent outline-none border-t border-[var(--color-hover)]/50"
               >
                 <span className="flex items-center gap-2">
-                  <Terminal className="w-3.5 h-3.5 text-[#5C5F66] group-hover:text-[#339AF0]" />
+                  <Terminal className="w-3.5 h-3.5 text-[var(--color-muted)] group-hover:text-[#339AF0]" />
                   <span>Open Terminal Here</span>
                 </span>
-                <span className="font-mono text-[9px] text-[#5C5F66] bg-[#1A1B1E] px-1 py-0.5 rounded">Shell</span>
+                <span className="font-mono text-[9px] text-[var(--color-muted)] bg-[var(--color-surface)] px-1 py-0.5 rounded">Shell</span>
               </button>
             )}
 
-            <div className="h-px bg-[#25262B] my-1" />
+            <div className="h-px bg-[var(--color-hover)] my-1" />
 
             <button
               onClick={() => handleMenuAction(onF8Delete)}

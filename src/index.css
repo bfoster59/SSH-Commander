@@ -1,9 +1,32 @@
 @import "tailwindcss";
 
+/* Themeable neutral palette. Dark is the default; .light overrides it. */
+:root {
+  --color-base: #0F1115;
+  --color-panel: #14161A;
+  --color-surface: #1A1B1E;
+  --color-hover: #25262B;
+  --color-border: #2C2E33;
+  --color-elevated: #373A40;
+  --color-content: #C1C2C5;
+  --color-muted: #5C5F66;
+}
+
+:root.light {
+  --color-base: #F1F3F5;
+  --color-panel: #FFFFFF;
+  --color-surface: #FFFFFF;
+  --color-hover: #E9ECEF;
+  --color-border: #DEE2E6;
+  --color-elevated: #CED4DA;
+  --color-content: #212529;
+  --color-muted: #868E96;
+}
+
 @layer base {
   body {
-    background-color: #0F1115;
-    color: #C1C2C5;
+    background-color: var(--color-base);
+    color: var(--color-content);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   }
 }
@@ -15,15 +38,14 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #14161A;
+  background: var(--color-panel);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2C2E33;
+  background: var(--color-border);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: #339AF0;
 }
-

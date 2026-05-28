@@ -8,6 +8,8 @@ import { Client, SFTPWrapper } from "ssh2";
 import { WebSocketServer, WebSocket } from "ws";
 import * as pty from "node-pty";
 import type { IncomingMessage } from "http";
+import AdmZip from "adm-zip";
+import * as tar from "tar";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -298,6 +300,110 @@ app.post("/api/local/search", async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+
+// ---- ARCHIVE: compress / extract (.zip and .tar.gz) ----
+
+function archiveBaseName(name: string): string {
+  return name.replace(/\.(zip|tar\.gz|tgz|gz)$/i, "");
+}
+
+app.post("/api/local/compress", async (req, res) => {
+  try {
+    const { basePath, entries, archiveName, format } = req.body as
+      { basePath: string; entries: string[]; archiveName: string; format: "zip" | "targz" };
+    const base = path.resolve(basePath);
+    const list = (entries || []).filter(Boolean);
+    if (list.length === 0) return res.status(400).json({ error: "No items selected to compress" });
+    const outPath = path.join(base, archiveName);
+
+    if (format === "targz") {
+      await tar.create({ gzip: true, file: outPath, cwd: base }, list);
+    } else {
+      const zip = new AdmZip();
+      for (const name of list) {
+        const full = path.join(base, name);
+        const st = await fs.promises.stat(full);
+        if (st.isDirectory()) zip.addLocalFolder(full, name);
+        else zip.addLocalFile(full);
+      }
+      zip.writeZip(outPath);
+    }
+    res.json({ success: true, archive: outPath });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/local/extract", async (req, res) => {
+  try {
+    const { archivePath } = req.body as { archivePath: string };
+    const archive = path.resolve(archivePath);
+    const dir = path.dirname(archive);
+    const dest = path.join(dir, archiveBaseName(path.basename(archive)));
+    await fs.promises.mkdir(dest, { recursive: true });
+
+    if (/\.(tar\.gz|tgz)$/i.test(archive)) {
+      await tar.extract({ file: archive, cwd: dest });
+    } else if (/\.zip$/i.test(archive)) {
+      new AdmZip(archive).extractAllTo(dest, true);
+    } else {
+      return res.status(400).json({ error: "Unsupported archive type (use .zip or .tar.gz)" });
+    }
+    res.json({ success: true, dest });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Single-quote escape for POSIX remote shells.
+function shq(s: string): string {
+  return `'${String(s).replace(/'/g, "'\\''")}'`;
+}
+
+function runRemote(connectionId: string, cmd: string, res: express.Response) {
+  let session;
+  try {
+    session = getSSHSession(connectionId);
+  } catch (e: any) {
+    return res.status(401).json({ error: e.message });
+  }
+  session.client.exec(cmd, (err, stream) => {
+    if (err) return res.status(500).json({ error: err.message });
+    let stderr = "";
+    stream.on("data", () => {});
+    stream.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    stream.on("close", (code: number) => {
+      if (code === 0) res.json({ success: true });
+      else res.status(500).json({ error: stderr.trim() || `Process exited with code ${code}` });
+    });
+  });
+}
+
+app.post("/api/ssh/compress", (req, res) => {
+  const { connectionId, basePath, entries, archiveName, format } = req.body as
+    { connectionId: string; basePath: string; entries: string[]; archiveName: string; format: "zip" | "targz" };
+  const list = (entries || []).filter(Boolean);
+  if (list.length === 0) return res.status(400).json({ error: "No items selected to compress" });
+  const items = list.map(shq).join(" ");
+  const cmd = format === "targz"
+    ? `cd ${shq(basePath)} && tar -czf ${shq(archiveName)} ${items}`
+    : `cd ${shq(basePath)} && zip -r ${shq(archiveName)} ${items}`;
+  runRemote(connectionId, cmd, res);
+});
+
+app.post("/api/ssh/extract", (req, res) => {
+  const { connectionId, archivePath } = req.body as { connectionId: string; archivePath: string };
+  const slash = archivePath.lastIndexOf("/");
+  const dir = slash >= 0 ? archivePath.slice(0, slash) || "/" : ".";
+  const baseName = slash >= 0 ? archivePath.slice(slash + 1) : archivePath;
+  const dest = `${dir.replace(/\/$/, "")}/${archiveBaseName(baseName)}`;
+  const isTar = /\.(tar\.gz|tgz)$/i.test(baseName);
+  const cmd = isTar
+    ? `mkdir -p ${shq(dest)} && tar -xzf ${shq(archivePath)} -C ${shq(dest)}`
+    : `mkdir -p ${shq(dest)} && unzip -o ${shq(archivePath)} -d ${shq(dest)}`;
+  runRemote(connectionId, cmd, res);
 });
 
 

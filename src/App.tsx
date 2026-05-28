@@ -17,12 +17,23 @@ import {
   Loader2,
   AlertTriangle,
   Radio,
-  Clock
+  Clock,
+  Sun,
+  Moon
 } from "lucide-react";
 
 export default function App() {
   // Session timer ticker
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // Light / dark theme
+  const [theme, setTheme] = useState<'dark' | 'light'>(
+    () => (localStorage.getItem('ssh-cmd-theme') === 'light' ? 'light' : 'dark')
+  );
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('ssh-cmd-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -424,6 +435,71 @@ export default function App() {
     if (!window.confirm(label)) return;
 
     triggerTransferJob(srcPane, dstPane, fullSourcePaths);
+  };
+
+  const handleCompress = async (pane: 'left' | 'right') => {
+    const selectedEntries = getSelectedEntries(pane);
+    if (selectedEntries.length === 0) {
+      alert("Select one or more items to compress.");
+      return;
+    }
+    const basePath = pane === 'left' ? leftPath : rightPath;
+    const isRemote = (pane === 'left' ? leftType : rightType) === 'remote';
+    const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
+
+    const suggested = selectedEntries.length === 1 ? `${selectedEntries[0].name}.zip` : "archive.zip";
+    const archiveName = window.prompt(
+      "Archive name (use .zip or .tar.gz):",
+      suggested
+    );
+    if (!archiveName) return;
+    const format: 'zip' | 'targz' = /\.(tar\.gz|tgz)$/i.test(archiveName) ? 'targz' : 'zip';
+    const finalName = format === 'zip' && !/\.zip$/i.test(archiveName) ? `${archiveName}.zip` : archiveName;
+    const names = selectedEntries.map(e => e.name);
+
+    try {
+      const url = isRemote ? '/api/ssh/compress' : '/api/local/compress';
+      const body = isRemote
+        ? { connectionId: connId, basePath, entries: names, archiveName: finalName, format }
+        : { basePath, entries: names, archiveName: finalName, format };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Compression failed');
+      }
+      triggerRefresh(pane);
+    } catch (err: any) {
+      alert(`Compress failed: ${err.message}`);
+    }
+  };
+
+  const handleExtract = async (pane: 'left' | 'right', entry: FileEntry) => {
+    const basePath = pane === 'left' ? leftPath : rightPath;
+    const isRemote = (pane === 'left' ? leftType : rightType) === 'remote';
+    const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
+    const separator = basePath.includes('/') ? '/' : '\\';
+    const archivePath = basePath.endsWith(separator) ? basePath + entry.name : basePath + separator + entry.name;
+
+    try {
+      const url = isRemote ? '/api/ssh/extract' : '/api/local/extract';
+      const body = isRemote ? { connectionId: connId, archivePath } : { archivePath };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Extraction failed');
+      }
+      triggerRefresh(pane);
+    } catch (err: any) {
+      alert(`Extract failed: ${err.message}`);
+    }
   };
 
   const handleOpenFileFromTable = (pane: 'left' | 'right', entry: FileEntry) => {
@@ -1167,23 +1243,23 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#0F1115] text-[#C1C2C5] font-sans overflow-hidden" id="dashboard-root">
+    <div className="flex flex-col h-screen w-full bg-[var(--color-base)] text-[var(--color-content)] font-sans overflow-hidden" id="dashboard-root">
       {/* Top Navigation & Host Selector */}
-      <nav className="h-12 border-b border-[#2C2E33] flex items-center justify-between px-4 bg-[#14161A] shrink-0 font-sans">
+      <nav className="h-12 border-b border-[var(--color-border)] flex items-center justify-between px-4 bg-[var(--color-panel)] shrink-0 font-sans">
         <div className="flex items-center space-x-4">
-          <span className="font-mono font-bold text-[#339AF0] tracking-tight">COMMANDER_PRO.EXE</span>
-          <div className="h-4 w-px bg-[#2C2E33]"></div>
+          <span className="font-mono font-bold text-[#339AF0] tracking-tight">SSH_COMMANDER</span>
+          <div className="h-4 w-px bg-[var(--color-border)]"></div>
           <div className="flex space-x-1">
             <button 
               onClick={() => setIsConnectionOpen(true)}
-              className="px-2 py-0.5 bg-[#2C2E33] text-[#339AF0] font-mono text-[10px] rounded hover:bg-[#339AF0] hover:text-white transition-colors cursor-pointer"
+              className="px-2 py-0.5 bg-[var(--color-border)] text-[#339AF0] font-mono text-[10px] rounded hover:bg-[#339AF0] hover:text-white transition-colors cursor-pointer"
               title="Quick Connect SSH"
             >
               [ CONNECT SSH ]
             </button>
             <button 
               onClick={() => setSearchOpen(true)}
-              className="px-2 py-0.5 bg-[#339AF0] text-[#0F1115] font-mono font-bold text-[10px] rounded hover:bg-[#339AF0]/90 transition-colors cursor-pointer flex items-center gap-1"
+              className="px-2 py-0.5 bg-[#339AF0] text-[var(--color-base)] font-mono font-bold text-[10px] rounded hover:bg-[#339AF0]/90 transition-colors cursor-pointer flex items-center gap-1"
               title="Search System (Alt+F7)"
             >
               <Search className="w-2.5 h-2.5" />
@@ -1194,19 +1270,26 @@ export default function App() {
         
         <div className="flex items-center space-x-6 text-[11px] font-mono">
           <div className="flex items-center space-x-2">
-            <span className="text-[#5C5F66]">ACTIVE HOST:</span>
+            <span className="text-[var(--color-muted)]">ACTIVE HOST:</span>
             <span className="text-[#40C057] font-semibold flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-[#40C057] inline-block animate-ping"></span>
               {activeHostName()}
             </span>
           </div>
           <div className="flex items-center space-x-2">
-            <span className="text-[#5C5F66]">SESSION:</span>
+            <span className="text-[var(--color-muted)]">SESSION:</span>
             <span className="text-[#FAB005] font-semibold flex items-center gap-1">
               <Clock className="w-3.5 h-3.5 text-[#FAB005]" />
               {formatSessionTime(elapsedSeconds)}
             </span>
           </div>
+          <button
+            onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="p-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-content)] hover:border-[#339AF0] hover:text-[#339AF0] transition-colors cursor-pointer"
+          >
+            {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+          </button>
         </div>
       </nav>
 
@@ -1236,6 +1319,8 @@ export default function App() {
             onNavigate={(path) => handleNavigate('left', path)}
             onOpenFile={(entry) => handleOpenFileFromTable('left', entry)}
             onDropFiles={(src) => handleCrossPaneDrop(src, 'left')}
+            onCompress={() => handleCompress('left')}
+            onExtract={(entry) => handleExtract('left', entry)}
             onRefresh={() => triggerRefresh('left')}
             onToggleType={(newType) => handleTogglePaneType('left', newType as 'local' | 'remote')}
             onOpenTerminal={(path) => handleOpenTerminal('left', path)}
@@ -1246,9 +1331,9 @@ export default function App() {
             onF8Delete={triggerF8Delete}
           />
           {/* Per-pane command line */}
-          <div className="bg-[#14161A] border-t border-[#2C2E33] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
+          <div className="bg-[var(--color-panel)] border-t border-[var(--color-border)] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
             <span className="text-[#339AF0] font-bold shrink-0">CMD:</span>
-            <span className="text-[#5C5F66] truncate max-w-[40%] shrink" title={leftPath}>{leftPath}</span>
+            <span className="text-[var(--color-muted)] truncate max-w-[40%] shrink" title={leftPath}>{leftPath}</span>
             <span className="text-white brightness-75 shrink-0">$</span>
             <input
               type="text"
@@ -1257,7 +1342,7 @@ export default function App() {
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRunCmd('left'); } }}
               onFocus={() => setActivePane('left')}
               placeholder="Type a command and press Enter (e.g. claude, ls, git status)"
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[#3A3D44] focus:ring-0"
+              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[var(--color-muted)] focus:ring-0"
             />
           </div>
         </section>
@@ -1284,6 +1369,8 @@ export default function App() {
             onNavigate={(path) => handleNavigate('right', path)}
             onOpenFile={(entry) => handleOpenFileFromTable('right', entry)}
             onDropFiles={(src) => handleCrossPaneDrop(src, 'right')}
+            onCompress={() => handleCompress('right')}
+            onExtract={(entry) => handleExtract('right', entry)}
             onRefresh={() => triggerRefresh('right')}
             onToggleType={(newType) => handleTogglePaneType('right', newType as 'local' | 'remote')}
             onOpenTerminal={(path) => handleOpenTerminal('right', path)}
@@ -1294,9 +1381,9 @@ export default function App() {
             onF8Delete={triggerF8Delete}
           />
           {/* Per-pane command line */}
-          <div className="bg-[#14161A] border-t border-[#2C2E33] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
+          <div className="bg-[var(--color-panel)] border-t border-[var(--color-border)] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
             <span className="text-[#339AF0] font-bold shrink-0">CMD:</span>
-            <span className="text-[#5C5F66] truncate max-w-[40%] shrink" title={rightPath}>{rightPath}</span>
+            <span className="text-[var(--color-muted)] truncate max-w-[40%] shrink" title={rightPath}>{rightPath}</span>
             <span className="text-white brightness-75 shrink-0">$</span>
             <input
               type="text"
@@ -1305,7 +1392,7 @@ export default function App() {
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRunCmd('right'); } }}
               onFocus={() => setActivePane('right')}
               placeholder="Type a command and press Enter (e.g. claude, ls, git status)"
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[#3A3D44] focus:ring-0"
+              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[var(--color-muted)] focus:ring-0"
             />
           </div>
         </section>
@@ -1371,29 +1458,29 @@ export default function App() {
 
       {/* Highly polished, responsive recursive search modal overlay */}
       {searchOpen && (
-        <div className="fixed inset-0 bg-[#0F1115]/90 backdrop-blur-sm z-50 flex items-center justify-center p-4 shadow-2xl transition-all" id="search-modal-root">
-          <div className="bg-[#1A1B1E] border border-[#2C2E33] rounded w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] modal-content">
+        <div className="fixed inset-0 bg-[var(--color-base)]/90 backdrop-blur-sm z-50 flex items-center justify-center p-4 shadow-2xl transition-all" id="search-modal-root">
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] modal-content">
             {/* Search Header */}
-            <div className="bg-[#14161A] px-4 py-3 border-b border-[#2C2E33] flex justify-between items-center shrink-0">
+            <div className="bg-[var(--color-panel)] px-4 py-3 border-b border-[var(--color-border)] flex justify-between items-center shrink-0">
               <div className="flex items-center space-x-3">
                 <span className="font-bold text-[#339AF0] font-mono tracking-tight text-xs">SEARCH_ENGINE.EXE</span>
-                <div className="h-4 w-px bg-[#2C2E33]"></div>
-                <span className="text-[10px] text-[#5C5F66] truncate max-w-[320px] font-mono" title={activePane === 'left' ? leftPath : rightPath}>
+                <div className="h-4 w-px bg-[var(--color-border)]"></div>
+                <span className="text-[10px] text-[var(--color-muted)] truncate max-w-[320px] font-mono" title={activePane === 'left' ? leftPath : rightPath}>
                   START PATH: {activePane === 'left' ? leftPath : rightPath}
                 </span>
               </div>
               <button 
                 onClick={() => { setSearchOpen(false); setSearchError(""); setSearchResults([]); }}
-                className="text-[#5C5F66] hover:text-white transition-colors cursor-pointer text-xs font-mono font-bold hover:bg-rose-950 px-1 rounded"
+                className="text-[var(--color-muted)] hover:text-white transition-colors cursor-pointer text-xs font-mono font-bold hover:bg-rose-950 px-1 rounded"
               >
                 [X]
               </button>
             </div>
 
             {/* Traversal Query setup form */}
-            <form onSubmit={triggerSearchQuery} className="p-4 border-b border-[#2C2E33] space-y-3 bg-[#14161A]/40">
+            <form onSubmit={triggerSearchQuery} className="p-4 border-b border-[var(--color-border)] space-y-3 bg-[var(--color-panel)]/40">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-[#5C5F66] font-mono uppercase font-bold tracking-wide">Enter substring or pattern matching parameters</label>
+                <label className="text-[10px] text-[var(--color-muted)] font-mono uppercase font-bold tracking-wide">Enter substring or pattern matching parameters</label>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -1401,7 +1488,7 @@ export default function App() {
                     placeholder="e.g. index, package, README, src, *.json ..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="flex-1 text-xs py-2 px-3 rounded bg-[#0F1115] border border-[#2C2E33] text-[#C1C2C5] placeholder-[#5C5F66] focus:outline-none focus:border-[#339AF0] font-mono"
+                    className="flex-1 text-xs py-2 px-3 rounded bg-[var(--color-base)] border border-[var(--color-border)] text-[var(--color-content)] placeholder-[var(--color-muted)] focus:outline-none focus:border-[#339AF0] font-mono"
                     autoFocus
                   />
                   <button
@@ -1426,25 +1513,25 @@ export default function App() {
             </form>
 
             {/* Results interactive display panels */}
-            <div className="flex-1 overflow-y-auto min-h-[300px] max-h-[400px] p-3 bg-[#0F1115]">
+            <div className="flex-1 overflow-y-auto min-h-[300px] max-h-[400px] p-3 bg-[var(--color-base)]">
               {searchLoading && (
                 <div className="flex flex-col items-center justify-center h-full py-16 gap-3">
                   <Loader2 className="w-8 h-8 animate-spin text-[#339AF0]" />
-                  <span className="text-xs text-[#5C5F66] font-mono animate-pulse">Recursive traversal is indexing active filesystem branch...</span>
+                  <span className="text-xs text-[var(--color-muted)] font-mono animate-pulse">Recursive traversal is indexing active filesystem branch...</span>
                 </div>
               )}
 
               {searchError && !searchLoading && (
                 <div className="flex flex-col items-center justify-center h-full py-12 gap-2 text-center px-4">
                   <AlertTriangle className="w-8 h-8 text-[#FAB005]" />
-                  <span className="text-xs text-[#C1C2C5] font-semibold">{searchError}</span>
-                  <span className="text-[10px] text-[#5C5F66] font-mono">Verify query parameters and folder accessibility permissions.</span>
+                  <span className="text-xs text-[var(--color-content)] font-semibold">{searchError}</span>
+                  <span className="text-[10px] text-[var(--color-muted)] font-mono">Verify query parameters and folder accessibility permissions.</span>
                 </div>
               )}
 
               {!searchLoading && !searchError && searchResults.length > 0 && (
                 <div className="font-mono">
-                  <div className="text-[10px] text-[#5C5F66] px-1 pb-2 border-b border-[#2C2E33] mb-2 flex justify-between uppercase">
+                  <div className="text-[10px] text-[var(--color-muted)] px-1 pb-2 border-b border-[var(--color-border)] mb-2 flex justify-between uppercase">
                     <span>Matches: {searchResults.length} items found</span>
                     <span className="text-[#FAB005]">Double click row to mount in active {activePane.toUpperCase()} pane</span>
                   </div>
@@ -1452,18 +1539,18 @@ export default function App() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-[11px] border-collapse">
                       <thead>
-                        <tr className="text-[#5C5F66] border-b border-[#2C2E33] bg-[#14161A]/50 text-[10px] uppercase">
+                        <tr className="text-[var(--color-muted)] border-b border-[var(--color-border)] bg-[var(--color-panel)]/50 text-[10px] uppercase">
                           <th className="px-2 py-1.5 font-normal w-1/3">Filename / Directory</th>
                           <th className="px-2 py-1.5 font-normal w-1/2">Path location route</th>
                           <th className="px-2 py-1.5 font-normal text-right w-1/6">Type</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-[#25262B]">
+                      <tbody className="divide-y divide-[var(--color-hover)]">
                         {searchResults.map((match, i) => (
                           <tr 
                             key={i}
                             onDoubleClick={() => handleSearchMatchSelection(match)}
-                            className="hover:bg-[#25262B] group cursor-pointer transition-colors"
+                            className="hover:bg-[var(--color-hover)] group cursor-pointer transition-colors"
                           >
                             <td className="px-2 py-1 text-[#339AF0] font-semibold truncate max-w-[200px]" title={match.name}>
                               {match.isDirectory ? `📁 ${match.name}/` : `📄 ${match.name}`}
@@ -1471,7 +1558,7 @@ export default function App() {
                             <td className="px-2 py-1 text-slate-400 font-mono text-[10px] truncate max-w-[320px]" title={match.path}>
                               {match.path}
                             </td>
-                            <td className="px-2 py-1 text-right text-[#5C5F66] uppercase text-[10px]">
+                            <td className="px-2 py-1 text-right text-[var(--color-muted)] uppercase text-[10px]">
                               {match.isDirectory ? 'DIR' : 'FILE'}
                             </td>
                           </tr>
@@ -1483,8 +1570,8 @@ export default function App() {
               )}
 
               {!searchLoading && !searchError && searchResults.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-full py-20 text-[#5C5F66] font-mono text-[11px] gap-2">
-                  <Radio className="w-8 h-8 opacity-40 text-[#5C5F66] shrink-0" />
+                <div className="flex flex-col items-center justify-center h-full py-20 text-[var(--color-muted)] font-mono text-[11px] gap-2">
+                  <Radio className="w-8 h-8 opacity-40 text-[var(--color-muted)] shrink-0" />
                   <span>Interactive file scanner is ready. Type search pattern.</span>
                   <span className="text-[10px] opacity-60">Scanning runs in background thread on target SSH shell or local node.</span>
                 </div>
@@ -1492,8 +1579,8 @@ export default function App() {
             </div>
 
             {/* Search footer row instructions */}
-            <div className="bg-[#14161A] border-t border-[#2C2E33] px-4 py-2 flex items-center justify-between text-[11px] text-[#5C5F66] font-mono shrink-0">
-              <span className="text-[#5C5F66]">Alt+F7 to toggle search dashboard</span>
+            <div className="bg-[var(--color-panel)] border-t border-[var(--color-border)] px-4 py-2 flex items-center justify-between text-[11px] text-[var(--color-muted)] font-mono shrink-0">
+              <span className="text-[var(--color-muted)]">Alt+F7 to toggle search dashboard</span>
               <span className="text-[#339AF0] font-bold">DOUBLE CLICK TARGET TO FOCUS DIRECTORY</span>
             </div>
           </div>

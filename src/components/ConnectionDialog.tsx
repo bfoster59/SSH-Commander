@@ -140,19 +140,19 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-[#0F1115]/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[#1A1B1E] border border-[#2C2E33] w-full max-w-4xl rounded shadow-2xl flex flex-col md:flex-row overflow-hidden overflow-y-auto max-h-[90vh]">
+    <div className="fixed inset-0 bg-[var(--color-base)]/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] w-full max-w-4xl rounded shadow-2xl flex flex-col md:flex-row overflow-hidden overflow-y-auto max-h-[90vh]">
 
         {/* Left pane: Profiles List */}
-        <div className="w-full md:w-1/3 bg-[#14161A] border-r border-[#2C2E33] p-4 shrink-0 flex flex-col">
-          <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#2C2E33]">
-            <h3 className="font-semibold text-[#C1C2C5] flex items-center gap-2 text-sm uppercase">
+        <div className="w-full md:w-1/3 bg-[var(--color-panel)] border-r border-[var(--color-border)] p-4 shrink-0 flex flex-col">
+          <div className="flex items-center justify-between mb-4 pb-2 border-b border-[var(--color-border)]">
+            <h3 className="font-semibold text-[var(--color-content)] flex items-center gap-2 text-sm uppercase">
               <Server className="w-4 h-4 text-[#339AF0]" />
               Profiles
             </h3>
             <button
               onClick={handleNewProfileClick}
-              className="p-1 rounded bg-[#2C2E33] hover:bg-[#339AF0] text-[#339AF0] hover:text-white transition-colors cursor-pointer"
+              className="p-1 rounded bg-[var(--color-border)] hover:bg-[#339AF0] text-[#339AF0] hover:text-white transition-colors cursor-pointer"
               title="Add New Connection"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -161,7 +161,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
 
           <div className="flex-1 space-y-1.5 overflow-y-auto max-h-[300px] md:max-h-none">
             {profiles.length === 0 ? (
-              <p className="text-xs text-[#5C5F66] italic p-4 text-center">No connections saved.</p>
+              <p className="text-xs text-[var(--color-muted)] italic p-4 text-center">No connections saved.</p>
             ) : (
               profiles.map(p => (
                 <div
@@ -169,17 +169,17 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   onClick={() => handleProfileSelect(p.id)}
                   className={`flex items-center justify-between p-2.5 rounded cursor-pointer transition-all border ${
                     selectedProfileId === p.id
-                      ? "bg-[#25262B] border-[#339AF0] text-white"
-                      : "bg-[#1A1B1E]/50 hover:bg-[#2C2E33]/40 border-transparent text-[#C1C2C5]"
+                      ? "bg-[var(--color-hover)] border-[#339AF0] text-white"
+                      : "bg-[var(--color-surface)]/50 hover:bg-[var(--color-border)]/40 border-transparent text-[var(--color-content)]"
                   }`}
                 >
                   <div className="flex flex-col min-w-0 pr-2 font-mono">
-                    <span className="text-xs font-semibold truncate text-[#C1C2C5]">{p.name}</span>
-                    <span className="text-[10px] text-[#5C5F66] truncate">{p.username}@{p.host}</span>
+                    <span className="text-xs font-semibold truncate text-[var(--color-content)]">{p.name}</span>
+                    <span className="text-[10px] text-[var(--color-muted)] truncate">{p.username}@{p.host}</span>
                   </div>
                   <button
                     onClick={(e) => handleDeleteProfile(e, p.id)}
-                    className="p-1 hover:bg-[#FF4D4D]/20 rounded text-[#5C5F66] hover:text-[#FF4D4D] transition-colors shrink-0 cursor-pointer"
+                    className="p-1 hover:bg-[#FF4D4D]/20 rounded text-[var(--color-muted)] hover:text-[#FF4D4D] transition-colors shrink-0 cursor-pointer"
                     title="Delete connection"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -191,15 +191,15 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
         </div>
 
         {/* Right pane: Form configuration */}
-        <div className="flex-1 p-5 lg:p-6 flex flex-col justify-between min-w-0 bg-[#1A1B1E]">
-          <div className="flex items-center justify-between pb-3 mb-4 border-b border-[#2C2E33]">
+        <div className="flex-1 p-5 lg:p-6 flex flex-col justify-between min-w-0 bg-[var(--color-surface)]">
+          <div className="flex items-center justify-between pb-3 mb-4 border-b border-[var(--color-border)]">
             <h3 className="font-semibold text-white text-md flex items-center gap-2">
               <Shield className="w-4 text-[#339AF0] h-4" />
               SSH / SFTP Server Configuration
             </h3>
             <button
               onClick={onClose}
-              className="p-1 hover:bg-[#2C2E33] rounded text-[#C1C2C5] hover:text-white transition-colors cursor-pointer"
+              className="p-1 hover:bg-[var(--color-border)] rounded text-[var(--color-content)] hover:text-white transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -208,7 +208,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
           <form onSubmit={handleFormConnect} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="col-span-1">
-                <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
+                <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-1">
                   Profile Name
                 </label>
                 <input
@@ -217,12 +217,12 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="e.g., Target Production"
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-650 font-sans"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-650 font-sans"
                 />
               </div>
 
               <div className="col-span-1">
-                <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
+                <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-1">
                   Host address / IP
                 </label>
                 <input
@@ -231,12 +231,12 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="ssh.example.com or 10.0.0.12"
                   value={host}
                   onChange={e => setHost(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-655 font-mono"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-655 font-mono"
                 />
               </div>
 
               <div className="col-span-1">
-                <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
+                <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-1">
                   Port
                 </label>
                 <input
@@ -245,12 +245,12 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="22"
                   value={port}
                   onChange={e => setPort(Number(e.target.value))}
-                  className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] font-sans"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] font-sans"
                 />
               </div>
 
               <div className="col-span-1">
-                <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
+                <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-1">
                   Username
                 </label>
                 <input
@@ -259,34 +259,34 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="root / ubuntu / admin"
                   value={username}
                   onChange={e => setUsername(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-660 font-sans"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-660 font-sans"
                 />
               </div>
             </div>
 
-            <div className="border-t border-[#2C2E33] pt-4 mt-2">
-              <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-2.5">
+            <div className="border-t border-[var(--color-border)] pt-4 mt-2">
+              <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-2.5">
                 Authentication Style
               </label>
 
               <div className="flex gap-4 mb-4">
-                <label className="inline-flex items-center text-xs text-[#C1C2C5] font-medium cursor-pointer">
+                <label className="inline-flex items-center text-xs text-[var(--color-content)] font-medium cursor-pointer">
                   <input
                     type="radio"
                     name="authStyle"
                     checked={authType === "password"}
                     onChange={() => setAuthType("password")}
-                    className="mr-2 text-[#339AF0] focus:ring-[#339AF0] border-[#2C2E33] bg-[#14161A] h-3.5 w-3.5"
+                    className="mr-2 text-[#339AF0] focus:ring-[#339AF0] border-[var(--color-border)] bg-[var(--color-panel)] h-3.5 w-3.5"
                   />
                   Password
                 </label>
-                <label className="inline-flex items-center text-xs text-[#C1C2C5] font-medium cursor-pointer">
+                <label className="inline-flex items-center text-xs text-[var(--color-content)] font-medium cursor-pointer">
                   <input
                     type="radio"
                     name="authStyle"
                     checked={authType === "key"}
                     onChange={() => setAuthType("key")}
-                    className="mr-2 text-[#339AF0] focus:ring-[#339AF0] border-[#2C2E33] bg-[#14161A] h-3.5 w-3.5"
+                    className="mr-2 text-[#339AF0] focus:ring-[#339AF0] border-[var(--color-border)] bg-[var(--color-panel)] h-3.5 w-3.5"
                   />
                   Private Key File
                 </label>
@@ -294,21 +294,21 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
 
               {authType === "password" ? (
                 <div>
-                  <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
-                    Password <span className="text-[#5C5F66] normal-case">(not saved — entered each connect)</span>
+                  <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-1">
+                    Password <span className="text-[var(--color-muted)] normal-case">(not saved — entered each connect)</span>
                   </label>
                   <input
                     type="password"
                     placeholder="SSH password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-[#5C5F66]"
+                    className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)]"
                   />
                 </div>
               ) : (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
+                    <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-1">
                       Private Key File Path
                     </label>
                     <input
@@ -316,33 +316,33 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                       placeholder="~/.ssh/id_ed25519"
                       value={privateKeyPath}
                       onChange={e => setPrivateKeyPath(e.target.value)}
-                      className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-[#5C5F66] font-mono"
+                      className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)] font-mono"
                     />
-                    <p className="text-[10px] text-[#5C5F66] mt-1">Path on the machine running SSH Commander. ~ expands to your home directory.</p>
+                    <p className="text-[10px] text-[var(--color-muted)] mt-1">Path on the machine running SSH Commander. ~ expands to your home directory.</p>
                   </div>
 
                   <div>
-                    <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
-                      Key Passphrase <span className="text-[#5C5F66] normal-case">(optional, not saved)</span>
+                    <label className="block text-[11px] uppercase tracking-wide text-[var(--color-muted)] font-medium mb-1">
+                      Key Passphrase <span className="text-[var(--color-muted)] normal-case">(optional, not saved)</span>
                     </label>
                     <input
                       type="password"
                       placeholder="Passphrase if the key is encrypted"
                       value={passphrase}
                       onChange={e => setPassphrase(e.target.value)}
-                      className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-[#5C5F66]"
+                      className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)]"
                     />
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 pt-5 border-t border-[#2C2E33] justify-end">
+            <div className="flex flex-col sm:flex-row gap-3 pt-5 border-t border-[var(--color-border)] justify-end">
               <button
                 type="button"
                 onClick={handleSaveProfile}
                 disabled={!name || !host || !username}
-                className="px-4 py-2 text-xs font-semibold rounded bg-[#2C2E33] hover:bg-[#373A40] text-[#C1C2C5] hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer border border-[#2C2E33]"
+                className="px-4 py-2 text-xs font-semibold rounded bg-[var(--color-border)] hover:bg-[var(--color-elevated)] text-[var(--color-content)] hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer border border-[var(--color-border)]"
                 id="btn-save-profile"
               >
                 <KeyRound className="w-3.5 h-3.5 text-[#FAB005]" />

@@ -143,9 +143,9 @@ export default function TerminalModal({
       <div
         className={`fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-[110] p-4 ${minimized ? "hidden" : ""}`}
       >
-        <div className="bg-[#0A0B0C] border border-[#2C2E33] w-full max-w-4xl h-[80vh] rounded-lg flex flex-col shadow-[0_20px_60px_rgba(0,0,0,0.8)] overflow-hidden">
+        <div className="bg-[#0A0B0C] border border-[var(--color-border)] w-full max-w-4xl h-[80vh] rounded-lg flex flex-col shadow-[0_20px_60px_rgba(0,0,0,0.8)] overflow-hidden">
           {/* Header */}
-          <div className="bg-[#14161A] px-4 py-2.5 border-b border-[#2C2E33] flex items-center justify-between select-none">
+          <div className="bg-[var(--color-panel)] px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between select-none">
             <div className="flex items-center gap-2.5">
               {/* Functional traffic lights: close / minimize / restore */}
               <div className="flex gap-1.5 mr-1">
@@ -185,7 +185,7 @@ export default function TerminalModal({
                   value={shell}
                   onChange={(e) => setShell(e.target.value as ShellChoice)}
                   title="Choose shell"
-                  className="text-[11px] py-1 px-1.5 rounded bg-[#1A1B1E] text-[#C1C2C5] border border-[#2C2E33] focus:outline-none focus:border-[#339AF0] cursor-pointer"
+                  className="text-[11px] py-1 px-1.5 rounded bg-[var(--color-surface)] text-[var(--color-content)] border border-[var(--color-border)] focus:outline-none focus:border-[#339AF0] cursor-pointer"
                 >
                   {LOCAL_SHELLS.map((s) => (
                     <option key={s.value} value={s.value}>{s.label}</option>
@@ -208,7 +208,7 @@ export default function TerminalModal({
                 <RotateCcw className="w-3 h-3" />
                 <span>Clear</span>
               </button>
-              <button onClick={onClose} title="Close session" className="text-[#5C5F66] hover:text-white transition-colors p-1">
+              <button onClick={onClose} title="Close session" className="text-[var(--color-muted)] hover:text-white transition-colors p-1">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -223,7 +223,7 @@ export default function TerminalModal({
 
       {/* Minimized pill — click to restore; session keeps running in the background */}
       {minimized && (
-        <div className="fixed bottom-3 right-3 z-[120] flex items-center gap-2 bg-[#14161A] border border-[#2C2E33] rounded-lg shadow-lg pl-3 pr-2 py-2">
+        <div className="fixed bottom-3 right-3 z-[120] flex items-center gap-2 bg-[var(--color-panel)] border border-[var(--color-border)] rounded-lg shadow-lg pl-3 pr-2 py-2">
           <button
             onClick={() => setMinimized(false)}
             title="Restore terminal"
@@ -234,12 +234,12 @@ export default function TerminalModal({
             <span className="text-xs font-semibold text-gray-200">
               {paneId.toUpperCase()} · {title}
             </span>
-            <span className="text-[10px] text-[#5C5F66] font-mono">({status})</span>
+            <span className="text-[10px] text-[var(--color-muted)] font-mono">({status})</span>
           </button>
           <button
             onClick={onClose}
             title="Close session"
-            className="text-[#5C5F66] hover:text-[#FF6B6B] transition-colors p-1 cursor-pointer"
+            className="text-[var(--color-muted)] hover:text-[#FF6B6B] transition-colors p-1 cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
