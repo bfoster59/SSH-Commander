@@ -142,6 +142,14 @@ export default function App() {
     initWorkspace();
   }, [leftPane.setPath, leftPane.setFiles, rightPane.setPath, rightPane.setFiles]);
 
+  // Enumerate local storage volumes for the drive bar
+  useEffect(() => {
+    fetch('/api/local/drives')
+      .then(res => res.json())
+      .then(data => setLocalDrives(data.drives || []))
+      .catch(() => setLocalDrives([]));
+  }, []);
+
   // Monitor background transfer progression state ticks
   useEffect(() => {
     if (!currentJobId) return;
@@ -396,6 +404,26 @@ export default function App() {
     } catch (err: any) {
       alert(`View trigger error: ${err.message}`);
     }
+  };
+
+  const handleCrossPaneDrop = (srcPane: 'left' | 'right', dstPane: 'left' | 'right') => {
+    if (srcPane === dstPane) return;
+    const selectedEntries = getSelectedEntries(srcPane);
+    if (selectedEntries.length === 0) return;
+
+    const srcPath = srcPane === 'left' ? leftPath : rightPath;
+    const dstPath = dstPane === 'left' ? leftPath : rightPath;
+    const separator = srcPath.includes('/') ? '/' : '\\';
+    const fullSourcePaths = selectedEntries.map(f =>
+      srcPath.endsWith(separator) ? srcPath + f.name : srcPath + separator + f.name
+    );
+
+    const label = selectedEntries.length === 1
+      ? `Copy "${selectedEntries[0].name}" into "${dstPath}"?`
+      : `Copy ${selectedEntries.length} items into "${dstPath}"?`;
+    if (!window.confirm(label)) return;
+
+    triggerTransferJob(srcPane, dstPane, fullSourcePaths);
   };
 
   const handleOpenFileFromTable = (pane: 'left' | 'right', entry: FileEntry) => {
@@ -1207,6 +1235,7 @@ export default function App() {
             onFocus={() => setActivePane('left')}
             onNavigate={(path) => handleNavigate('left', path)}
             onOpenFile={(entry) => handleOpenFileFromTable('left', entry)}
+            onDropFiles={(src) => handleCrossPaneDrop(src, 'left')}
             onRefresh={() => triggerRefresh('left')}
             onToggleType={(newType) => handleTogglePaneType('left', newType as 'local' | 'remote')}
             onOpenTerminal={(path) => handleOpenTerminal('left', path)}
@@ -1254,6 +1283,7 @@ export default function App() {
             onFocus={() => setActivePane('right')}
             onNavigate={(path) => handleNavigate('right', path)}
             onOpenFile={(entry) => handleOpenFileFromTable('right', entry)}
+            onDropFiles={(src) => handleCrossPaneDrop(src, 'right')}
             onRefresh={() => triggerRefresh('right')}
             onToggleType={(newType) => handleTogglePaneType('right', newType as 'local' | 'remote')}
             onOpenTerminal={(path) => handleOpenTerminal('right', path)}

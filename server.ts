@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { Client, SFTPWrapper } from "ssh2";
@@ -59,7 +60,62 @@ function getSSHSession(connectionId: string): ActiveSSH {
 
 // API Routes
 
+// ---- 0. CONNECTION PROFILES (persisted, no secrets) ----
+
+const PROFILES_DIR = path.join(os.homedir(), ".ssh-commander");
+const PROFILES_FILE = path.join(PROFILES_DIR, "profiles.json");
+
+function readProfiles(): any[] {
+  try {
+    if (!fs.existsSync(PROFILES_FILE)) return [];
+    const raw = fs.readFileSync(PROFILES_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+app.get("/api/profiles", (_req, res) => {
+  res.json({ profiles: readProfiles() });
+});
+
+app.put("/api/profiles", (req, res) => {
+  try {
+    const profiles = Array.isArray(req.body.profiles) ? req.body.profiles : [];
+    // Strip any secrets defensively before writing to disk.
+    const sanitized = profiles.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      host: p.host,
+      port: p.port,
+      username: p.username,
+      authType: p.authType === "key" ? "key" : "password",
+      privateKeyPath: p.privateKeyPath || "",
+    }));
+    if (!fs.existsSync(PROFILES_DIR)) fs.mkdirSync(PROFILES_DIR, { recursive: true });
+    fs.writeFileSync(PROFILES_FILE, JSON.stringify(sanitized, null, 2), "utf-8");
+    res.json({ profiles: sanitized });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- 1. LOCAL ACTIONS ----
+
+app.get("/api/local/drives", (_req, res) => {
+  if (process.platform !== "win32") {
+    return res.json({ drives: ["/"] });
+  }
+  const drives: string[] = [];
+  for (let c = 65; c <= 90; c++) {
+    const letter = `${String.fromCharCode(c)}:\\`;
+    try {
+      if (fs.existsSync(letter)) drives.push(letter);
+    } catch { /* skip unreadable */ }
+  }
+  res.json({ drives });
+});
 
 app.post("/api/local/list", async (req, res) => {
   try {
@@ -309,11 +365,23 @@ app.post("/api/ssh/connect", (req, res) => {
     username: profile.username,
   };
 
-  if (profile.privateKey) {
-    connectionOpts.privateKey = profile.privateKey;
-    if (profile.passphrase) {
-      connectionOpts.passphrase = profile.passphrase;
+  if (profile.authType === "key" || profile.privateKeyPath || profile.privateKey) {
+    let keyMaterial = profile.privateKey;
+    if (profile.privateKeyPath) {
+      try {
+        const resolvedKeyPath = profile.privateKeyPath.startsWith("~")
+          ? path.join(os.homedir(), profile.privateKeyPath.slice(1))
+          : profile.privateKeyPath;
+        keyMaterial = fs.readFileSync(resolvedKeyPath, "utf-8");
+      } catch (keyErr: any) {
+        return res.status(400).json({ error: `Could not read private key file: ${keyErr.message}` });
+      }
     }
+    if (!keyMaterial) {
+      return res.status(400).json({ error: "Key authentication selected but no key file path was provided." });
+    }
+    connectionOpts.privateKey = keyMaterial;
+    if (profile.passphrase) connectionOpts.passphrase = profile.passphrase;
   } else if (profile.password) {
     connectionOpts.password = profile.password;
   } else {

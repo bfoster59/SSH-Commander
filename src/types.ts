@@ -4,10 +4,16 @@ export interface ConnectionProfile {
   host: string;
   port: number;
   username: string;
+  authType: 'password' | 'key';
+  privateKeyPath?: string;
+  // Transient secrets — supplied at connect time, never persisted to disk.
   password?: string;
   privateKey?: string;
   passphrase?: string;
 }
+
+// Stored on disk in ~/.ssh-commander/profiles.json (no secrets).
+export type StoredProfile = Omit<ConnectionProfile, 'password' | 'privateKey' | 'passphrase'>;
 
 export interface FileEntry {
   name: string;
@@ -21,7 +27,7 @@ export interface FileEntry {
 
 export interface PaneState {
   id: 'left' | 'right';
-  type: 'local' | 'remote' | 'gdrive';
+  type: 'local' | 'remote';
   currentPath: string;
   connectionId?: string; // Active connection id if type is remote
   connectionName?: string;

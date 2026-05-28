@@ -29,6 +29,7 @@ interface FileTableProps {
   onSelect: (index: number, selectedIndices: number[]) => void;
   onNavigate: (newPath: string) => void;
   onOpenFile?: (entry: FileEntry) => void;
+  onDropFiles?: (sourcePaneId: 'left' | 'right') => void;
   onRefresh: () => void;
   onToggleType: (newType: 'local' | 'remote') => void;
   connectionId?: string;
@@ -57,6 +58,7 @@ export default function FileTable({
   onSelect,
   onNavigate,
   onOpenFile,
+  onDropFiles,
   onRefresh,
   onToggleType,
   connectionName,
@@ -205,6 +207,31 @@ export default function FileTable({
     } else {
       onOpenFile?.(entry);
     }
+  };
+
+  const DRAG_MIME = "text/x-sshcmd-pane";
+
+  const handleRowDragStart = (e: React.DragEvent, entry: FileEntry, index: number) => {
+    if (entry.name === "..") { e.preventDefault(); return; }
+    onFocus();
+    // Drag the existing multi-selection if this row is part of it; otherwise this row.
+    if (!selectedIndices.includes(index)) onSelect(index, [index]);
+    e.dataTransfer.setData(DRAG_MIME, id);
+    e.dataTransfer.effectAllowed = "copy";
+  };
+
+  const handlePaneDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(DRAG_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  };
+
+  const handlePaneDrop = (e: React.DragEvent) => {
+    const src = e.dataTransfer.getData(DRAG_MIME);
+    if (!src) return;
+    e.preventDefault();
+    if (src !== id) onDropFiles?.(src as "left" | "right");
   };
 
   const goUp = () => {
@@ -383,6 +410,8 @@ export default function FileTable({
       {/* 4. Active interactive directories Grid table */}
         <div
           ref={tableRef}
+          onDragOver={handlePaneDragOver}
+          onDrop={handlePaneDrop}
           className="flex-1 overflow-y-auto select-none bg-[#1A1B1E]"
         >
           <table className="w-full text-left text-[11px] font-mono border-collapse table-fixed">
@@ -458,6 +487,8 @@ export default function FileTable({
                     <tr
                       key={`${entry.name}-${index}`}
                       ref={el => { rowsRef.current[index] = el; }}
+                      draggable={entry.name !== ".."}
+                      onDragStart={(e) => handleRowDragStart(e, entry, index)}
                       onClick={(e) => handleRowClick(index, e)}
                       onDoubleClick={() => handleDoubleClick(entry, index)}
                       onContextMenu={(e) => handleContextMenu(e, index, entry)}

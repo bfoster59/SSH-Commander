@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ConnectionProfile } from "../types";
+import { ConnectionProfile, StoredProfile } from "../types";
 import { X, Shield, Plus, Trash2, Key, KeyRound, Server } from "lucide-react";
 
 interface ConnectionDialogProps {
@@ -9,131 +9,113 @@ interface ConnectionDialogProps {
 }
 
 export default function ConnectionDialog({ isOpen, onClose, onConnect }: ConnectionDialogProps) {
-  const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  const [profiles, setProfiles] = useState<StoredProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
-  
+
   // Form fields
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [privateKey, setPrivateKey] = useState("");
-  const [passphrase, setPassphrase] = useState("");
   const [authType, setAuthType] = useState<"password" | "key">("password");
+  const [privateKeyPath, setPrivateKeyPath] = useState("");
+  // Transient secrets — typed at connect time, never saved.
+  const [password, setPassword] = useState("");
+  const [passphrase, setPassphrase] = useState("");
 
   useEffect(() => {
-    // Load local storage profiles
-    const saved = localStorage.getItem("ssh_files_profiles");
-    if (saved) {
+    if (!isOpen) return;
+    (async () => {
       try {
-        const parsed = JSON.parse(saved);
-        setProfiles(parsed);
-        if (parsed.length > 0) {
-          setSelectedProfileId(parsed[0].id);
-          loadProfileToForm(parsed[0]);
+        const res = await fetch("/api/profiles");
+        const data = await res.json();
+        const list: StoredProfile[] = data.profiles || [];
+        setProfiles(list);
+        if (list.length > 0) {
+          setSelectedProfileId(list[0].id);
+          loadProfileToForm(list[0]);
         }
       } catch (e) {
-        console.error("Failed to parse saved connection profiles", e);
+        console.error("Failed to load connection profiles", e);
       }
-    } else {
-      // Bootstrap default demo profiles for user ease-of-use (non-functional mock info)
-      const mockProfiles: ConnectionProfile[] = [
-        {
-          id: "demo-server",
-          name: "Sample VPS (Example)",
-          host: "ssh.example.com",
-          port: 22,
-          username: "ubuntu",
-          password: "password123",
-        }
-      ];
-      setProfiles(mockProfiles);
-      localStorage.setItem("ssh_files_profiles", JSON.stringify(mockProfiles));
-      setSelectedProfileId(mockProfiles[0].id);
-      loadProfileToForm(mockProfiles[0]);
-    }
-  }, []);
+    })();
+  }, [isOpen]);
 
-  const loadProfileToForm = (p: ConnectionProfile) => {
+  const persist = async (list: StoredProfile[]) => {
+    setProfiles(list);
+    try {
+      await fetch("/api/profiles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profiles: list }),
+      });
+    } catch (e) {
+      console.error("Failed to save connection profiles", e);
+    }
+  };
+
+  const loadProfileToForm = (p: StoredProfile) => {
     setName(p.name);
     setHost(p.host);
     setPort(p.port || 22);
     setUsername(p.username);
-    setPassword(p.password || "");
-    setPrivateKey(p.privateKey || "");
-    setPassphrase(p.passphrase || "");
-    setAuthType(p.privateKey ? "key" : "password");
+    setAuthType(p.authType === "key" ? "key" : "password");
+    setPrivateKeyPath(p.privateKeyPath || "");
+    // Secrets are never persisted — clear them so they must be re-entered.
+    setPassword("");
+    setPassphrase("");
   };
 
   const handleProfileSelect = (id: string) => {
     setSelectedProfileId(id);
     const found = profiles.find(p => p.id === id);
-    if (found) {
-      loadProfileToForm(found);
-    }
+    if (found) loadProfileToForm(found);
   };
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !host || !username) return;
 
-    const newProfile: ConnectionProfile = {
-      id: selectedProfileId.startsWith("demo-") || !selectedProfileId ? `prof_${Date.now()}` : selectedProfileId,
+    const stored: StoredProfile = {
+      id: selectedProfileId && !selectedProfileId.startsWith("temp_") ? selectedProfileId : `prof_${Date.now()}`,
       name,
       host,
       port: Number(port) || 22,
       username,
-      password: authType === "password" ? password : "",
-      privateKey: authType === "key" ? privateKey : "",
-      passphrase: authType === "key" ? passphrase : "",
+      authType,
+      privateKeyPath: authType === "key" ? privateKeyPath : "",
     };
 
-    let updated: ConnectionProfile[] = [];
-    if (profiles.find(p => p.id === newProfile.id)) {
-      updated = profiles.map(p => p.id === newProfile.id ? newProfile : p);
-    } else {
-      updated = [...profiles, newProfile];
-    }
+    const updated = profiles.find(p => p.id === stored.id)
+      ? profiles.map(p => (p.id === stored.id ? stored : p))
+      : [...profiles, stored];
 
-    setProfiles(updated);
-    localStorage.setItem("ssh_files_profiles", JSON.stringify(updated));
-    setSelectedProfileId(newProfile.id);
+    persist(updated);
+    setSelectedProfileId(stored.id);
   };
 
   const handleDeleteProfile = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     e.preventDefault();
     const filtered = profiles.filter(p => p.id !== id);
-    setProfiles(filtered);
-    localStorage.setItem("ssh_files_profiles", JSON.stringify(filtered));
+    persist(filtered);
     if (selectedProfileId === id) {
       if (filtered.length > 0) {
         setSelectedProfileId(filtered[0].id);
         loadProfileToForm(filtered[0]);
       } else {
         setSelectedProfileId("");
-        setName("");
-        setHost("");
-        setPort(22);
-        setUsername("");
-        setPassword("");
-        setPrivateKey("");
-        setPassphrase("");
+        setName(""); setHost(""); setPort(22); setUsername("");
+        setAuthType("password"); setPrivateKeyPath(""); setPassword(""); setPassphrase("");
       }
     }
   };
 
   const handleNewProfileClick = () => {
     setSelectedProfileId("");
-    setName("New Association");
-    setHost("");
-    setPort(22);
-    setUsername("");
-    setPassword("");
-    setPrivateKey("");
-    setPassphrase("");
-    setAuthType("password");
+    setName("New Connection");
+    setHost(""); setPort(22); setUsername("");
+    setAuthType("password"); setPrivateKeyPath(""); setPassword(""); setPassphrase("");
   };
 
   const handleFormConnect = (e: React.FormEvent) => {
@@ -146,9 +128,10 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
       host,
       port: Number(port) || 22,
       username,
-      password: authType === "password" ? password : "",
-      privateKey: authType === "key" ? privateKey : "",
-      passphrase: authType === "key" ? passphrase : "",
+      authType,
+      privateKeyPath: authType === "key" ? privateKeyPath : undefined,
+      password: authType === "password" ? password : undefined,
+      passphrase: authType === "key" ? passphrase : undefined,
     };
 
     onConnect(profileToConnect);
@@ -159,7 +142,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
   return (
     <div className="fixed inset-0 bg-[#0F1115]/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-[#1A1B1E] border border-[#2C2E33] w-full max-w-4xl rounded shadow-2xl flex flex-col md:flex-row overflow-hidden overflow-y-auto max-h-[90vh]">
-        
+
         {/* Left pane: Profiles List */}
         <div className="w-full md:w-1/3 bg-[#14161A] border-r border-[#2C2E33] p-4 shrink-0 flex flex-col">
           <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#2C2E33]">
@@ -167,7 +150,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
               <Server className="w-4 h-4 text-[#339AF0]" />
               Profiles
             </h3>
-            <button 
+            <button
               onClick={handleNewProfileClick}
               className="p-1 rounded bg-[#2C2E33] hover:bg-[#339AF0] text-[#339AF0] hover:text-white transition-colors cursor-pointer"
               title="Add New Connection"
@@ -185,8 +168,8 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   key={p.id}
                   onClick={() => handleProfileSelect(p.id)}
                   className={`flex items-center justify-between p-2.5 rounded cursor-pointer transition-all border ${
-                    selectedProfileId === p.id 
-                      ? "bg-[#25262B] border-[#339AF0] text-white" 
+                    selectedProfileId === p.id
+                      ? "bg-[#25262B] border-[#339AF0] text-white"
                       : "bg-[#1A1B1E]/50 hover:bg-[#2C2E33]/40 border-transparent text-[#C1C2C5]"
                   }`}
                 >
@@ -214,7 +197,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
               <Shield className="w-4 text-[#339AF0] h-4" />
               SSH / SFTP Server Configuration
             </h3>
-            <button 
+            <button
               onClick={onClose}
               className="p-1 hover:bg-[#2C2E33] rounded text-[#C1C2C5] hover:text-white transition-colors cursor-pointer"
             >
@@ -285,7 +268,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
               <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-2.5">
                 Authentication Style
               </label>
-              
+
               <div className="flex gap-4 mb-4">
                 <label className="inline-flex items-center text-xs text-[#C1C2C5] font-medium cursor-pointer">
                   <input
@@ -305,14 +288,14 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                     onChange={() => setAuthType("key")}
                     className="mr-2 text-[#339AF0] focus:ring-[#339AF0] border-[#2C2E33] bg-[#14161A] h-3.5 w-3.5"
                   />
-                  Secure Private Key
+                  Private Key File
                 </label>
               </div>
 
               {authType === "password" ? (
                 <div>
                   <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
-                    Password
+                    Password <span className="text-[#5C5F66] normal-case">(not saved — entered each connect)</span>
                   </label>
                   <input
                     type="password"
@@ -326,24 +309,25 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
-                      Private Key Content
+                      Private Key File Path
                     </label>
-                    <textarea
-                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
-                      value={privateKey}
-                      onChange={e => setPrivateKey(e.target.value)}
-                      rows={4}
-                      className="w-full text-xs p-2 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-[#5C5F66] font-mono resize-none leading-relaxed"
+                    <input
+                      type="text"
+                      placeholder="~/.ssh/id_ed25519"
+                      value={privateKeyPath}
+                      onChange={e => setPrivateKeyPath(e.target.value)}
+                      className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-[#5C5F66] font-mono"
                     />
+                    <p className="text-[10px] text-[#5C5F66] mt-1">Path on the machine running SSH Commander. ~ expands to your home directory.</p>
                   </div>
 
                   <div>
                     <label className="block text-[11px] uppercase tracking-wide text-[#5C5F66] font-medium mb-1">
-                      Key Passphrase (Optional)
+                      Key Passphrase <span className="text-[#5C5F66] normal-case">(optional, not saved)</span>
                     </label>
                     <input
                       type="password"
-                      placeholder="Key passphrase if encrypted"
+                      placeholder="Passphrase if the key is encrypted"
                       value={passphrase}
                       onChange={e => setPassphrase(e.target.value)}
                       className="w-full text-xs p-2.5 rounded bg-[#14161A] border border-[#2C2E33] text-white focus:outline-none focus:border-[#339AF0] placeholder-[#5C5F66]"
@@ -364,7 +348,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                 <KeyRound className="w-3.5 h-3.5 text-[#FAB005]" />
                 Save Profile
               </button>
-              
+
               <button
                 type="submit"
                 className="px-5 py-2 text-xs font-semibold rounded bg-[#339AF0] hover:bg-[#339AF0]/90 text-white transition-all hover:shadow-[0_0_15px_rgba(51,154,240,0.3)] shadow-none flex items-center justify-center gap-1.5 cursor-pointer"
