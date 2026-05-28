@@ -1,10 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
-import { X, Terminal, Trash2, RefreshCw, Command, ArrowRight, CornerDownLeft } from "lucide-react";
-
-interface TerminalHistoryItem {
-  type: "input" | "stdout" | "stderr" | "info" | "error";
-  text: string;
-}
+import { useEffect, useRef, useState } from "react";
+import { X, Terminal as TerminalIcon, RotateCcw } from "lucide-react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 
 interface TerminalModalProps {
   isOpen: boolean;
@@ -14,8 +11,18 @@ interface TerminalModalProps {
   connectionId?: string;
   connectionName?: string;
   initialPath: string;
-  onSyncCommanderPath?: (paneId: "left" | "right", path: string) => void;
+  initialCommand?: string;
 }
+
+type ShellChoice = "" | "powershell" | "pwsh" | "cmd" | "bash";
+
+const LOCAL_SHELLS: { value: ShellChoice; label: string }[] = [
+  { value: "", label: "Default" },
+  { value: "powershell", label: "PowerShell" },
+  { value: "pwsh", label: "pwsh (PS 7+)" },
+  { value: "cmd", label: "cmd.exe" },
+  { value: "bash", label: "bash / WSL" },
+];
 
 export default function TerminalModal({
   isOpen,
@@ -25,311 +32,141 @@ export default function TerminalModal({
   connectionId,
   connectionName,
   initialPath,
-  onSyncCommanderPath,
+  initialCommand,
 }: TerminalModalProps) {
-  const [currentPath, setCurrentPath] = useState(initialPath);
-  const [history, setHistory] = useState<TerminalHistoryItem[]>([]);
-  const [inputValue, setInputValue] = useState("");
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [executing, setExecuting] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const [shell, setShell] = useState<ShellChoice>("");
+  const [status, setStatus] = useState<"connecting" | "open" | "closed">("connecting");
 
-  const historyEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Synchronize path with initial path on open
   useEffect(() => {
-    if (isOpen) {
-      setCurrentPath(initialPath);
-      setHistory([
-        {
-          type: "info",
-          text: `--- ACTIVE SHELL SESSION BOUND TO ${paneId.toUpperCase()} PANEL (${type.toUpperCase()}) ---`
-        },
-        {
-          type: "info",
-          text: `Directory: ${initialPath}`
-        },
-        {
-          type: "info",
-          text: type === "remote" 
-            ? `Connection name: ${connectionName || "SSH Session"} (${connectionId})` 
-            : "Connection name: Local Sandbox System"
-        },
-        {
-          type: "info",
-          text: "Type any shell commands (e.g. ls, pwd, cat, mkdir, grep, git...)."
-        },
-        {
-          type: "info",
-          text: "Use 'cd <dir>' to travel. Type 'clear' to clear this monitor. Press Arrow Up / Down for history."
+    if (!isOpen || !containerRef.current) return;
+    let disposed = false;
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'Consolas, "Cascadia Mono", "Courier New", monospace',
+      theme: {
+        background: "#0A0B0C",
+        foreground: "#D4D4D4",
+        cursor: "#20C20E",
+      },
+      scrollback: 5000,
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(containerRef.current);
+    fit.fit();
+    termRef.current = term;
+
+    // Build the websocket URL for this session
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const params = new URLSearchParams({ type, cwd: initialPath });
+    if (type === "remote" && connectionId) params.set("connectionId", connectionId);
+    if (type === "local" && shell) params.set("shell", shell);
+    if (initialCommand) params.set("cmd", initialCommand);
+
+    const ws = new WebSocket(`${proto}://${location.host}/api/pty?${params.toString()}`);
+    wsRef.current = ws;
+    setStatus("connecting");
+
+    ws.onopen = () => {
+      if (disposed) return;
+      setStatus("open");
+      const { cols, rows } = term;
+      ws.send(JSON.stringify({ kind: "resize", cols, rows }));
+      term.focus();
+    };
+    ws.onmessage = (e) => { if (!disposed) term.write(typeof e.data === "string" ? e.data : ""); };
+    ws.onclose = () => { if (!disposed) { setStatus("closed"); term.write("\r\n\x1b[90m[session closed]\x1b[0m\r\n"); } };
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ kind: "input", data }));
+    });
+
+    const sendResize = () => {
+      try {
+        fit.fit();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ kind: "resize", cols: term.cols, rows: term.rows }));
         }
-      ]);
-      setInputValue("");
-      setHistoryIndex(-1);
-      // Auto-focus input
-      setTimeout(() => inputRef.current?.focus(), 80);
-    }
-  }, [isOpen, initialPath, type, paneId, connectionId, connectionName]);
+      } catch { /* container not measurable yet */ }
+    };
+    const ro = new ResizeObserver(sendResize);
+    ro.observe(containerRef.current);
 
-  // Scroll to bottom
-  useEffect(() => {
-    historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history]);
+    return () => {
+      disposed = true;
+      ro.disconnect();
+      try { ws.close(); } catch { /* noop */ }
+      term.dispose();
+      termRef.current = null;
+      wsRef.current = null;
+    };
+    // Reconnect when the modal opens, the target changes, or the shell changes.
+  }, [isOpen, type, connectionId, initialPath, initialCommand, shell]);
 
   if (!isOpen) return null;
 
-  const handleClear = () => {
-    setHistory([
-      { type: "info", text: `Screen cleared. Current directory: ${currentPath}` }
-    ]);
-  };
-
-  const executeCommand = async (cmd: string) => {
-    const trimmed = cmd.trim();
-    if (!trimmed) return;
-
-    // Local commands: clear and exit
-    if (trimmed.toLowerCase() === "clear") {
-      handleClear();
-      setInputValue("");
-      return;
-    }
-    if (trimmed.toLowerCase() === "exit") {
-      onClose();
-      return;
-    }
-
-    // Add input command to screen history
-    setHistory(prev => [...prev, { type: "input", text: trimmed }]);
-    setCommandHistory(prev => {
-      const idx = prev.indexOf(trimmed);
-      if (idx !== -1) {
-        // move to end
-        const filtered = prev.filter(c => c !== trimmed);
-        return [...filtered, trimmed];
-      }
-      return [...prev, trimmed];
-    });
-    setHistoryIndex(-1);
-    setInputValue("");
-    setExecuting(true);
-
-    try {
-      // Check if command is a 'cd' directive
-      const isCd = trimmed.startsWith("cd");
-      
-      let payloadCmd = trimmed;
-      if (isCd) {
-        // Intercept cd to resolve and update terminal prompt CWD
-        // Run: cd "${currentCwd}" && <cd directive> && pwd
-        payloadCmd = `${trimmed} && pwd`;
-      }
-
-      const res = await fetch("/api/terminal/exec", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type,
-          connectionId,
-          cmd: payloadCmd,
-          cwd: currentPath
-        })
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(errJson.error || "Execution failed");
-      }
-
-      const data = await res.json();
-      
-      if (data.stdout && data.stdout.trim()) {
-        if (isCd && data.code === 0) {
-          // CD succeeded, the stdout is the new absolute directory!
-          const newPath = data.stdout.trim();
-          setCurrentPath(newPath);
-          setHistory(prev => [...prev, { type: "info", text: `Changed directory to: ${newPath}` }]);
-        } else {
-          setHistory(prev => [...prev, { type: "stdout", text: data.stdout.trim() }]);
-        }
-      }
-
-      if (data.stderr && data.stderr.trim()) {
-        const isSgErr = isCd && data.code !== 0;
-        setHistory(prev => [
-          ...prev, 
-          { type: isSgErr ? "error" : "stderr", text: data.stderr.trim() }
-        ]);
-      }
-
-      // If stdout/stderr both empty and it completed successfully
-      if (!data.stdout?.trim() && !data.stderr?.trim()) {
-        setHistory(prev => [...prev, { type: "info", text: `Process completed with exit code: ${data.code}` }]);
-      }
-    } catch (err: any) {
-      setHistory(prev => [...prev, { type: "error", text: `Error: ${err.message}` }]);
-    } finally {
-      setExecuting(false);
-      // Re-focus input
-      setTimeout(() => inputRef.current?.focus(), 30);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      executeCommand(inputValue);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (commandHistory.length === 0) return;
-      const nextIdx = historyIndex === -1 ? commandHistory.length - 1 : historyIndex - 1;
-      if (nextIdx >= 0) {
-        setHistoryIndex(nextIdx);
-        setInputValue(commandHistory[nextIdx]);
-      }
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (commandHistory.length === 0) return;
-      const nextIdx = historyIndex + 1;
-      if (nextIdx < commandHistory.length) {
-        setHistoryIndex(nextIdx);
-        setInputValue(commandHistory[nextIdx]);
-      } else {
-        setHistoryIndex(-1);
-        setInputValue("");
-      }
-    }
-  };
-
-  const handleSyncClick = () => {
-    onSyncCommanderPath?.(paneId, currentPath);
-    setHistory(prev => [...prev, { 
-      type: "info", 
-      text: `Sync action: Commander ${paneId.toUpperCase()} panel set to ${currentPath}` 
-    }]);
-  };
+  const title = type === "remote" ? connectionName || "SSH Host" : "Local PC";
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-[110] p-4">
-      <div className="bg-[#0C0D0E] border border-[#2C2E33] w-full max-w-4xl h-[80vh] rounded-lg flex flex-col shadow-[0_20px_60px_rgba(0,0,0,0.8)] overflow-hidden">
-        {/* Modal Header */}
-        <div className="bg-[#14161A] px-4 py-3 border-b border-[#2C2E33] flex items-center justify-between select-none">
+      <div className="bg-[#0A0B0C] border border-[#2C2E33] w-full max-w-4xl h-[80vh] rounded-lg flex flex-col shadow-[0_20px_60px_rgba(0,0,0,0.8)] overflow-hidden">
+        {/* Header */}
+        <div className="bg-[#14161A] px-4 py-2.5 border-b border-[#2C2E33] flex items-center justify-between select-none">
           <div className="flex items-center gap-2.5">
             <div className="flex gap-1.5 mr-1">
               <span className="w-3 h-3 rounded-full bg-[#FF5F56]" />
               <span className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
               <span className="w-3 h-3 rounded-full bg-[#27C93F]" />
             </div>
-            <Terminal className="w-4 h-4 text-[#339AF0]" />
+            <TerminalIcon className="w-4 h-4 text-[#339AF0]" />
             <span className="text-xs font-semibold text-gray-200 uppercase tracking-wide">
-              SSH Console: {type === "remote" ? connectionName || "SSH Host" : "Local PC"}
+              {paneId.toUpperCase()} · {title}
+            </span>
+            <span
+              className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${
+                status === "open" ? "bg-[#40C057]/15 text-[#40C057]"
+                : status === "connecting" ? "bg-[#FAB005]/15 text-[#FAB005]"
+                : "bg-[#FF6B6B]/15 text-[#FF6B6B]"
+              }`}
+            >
+              {status}
             </span>
           </div>
           <div className="flex items-center gap-2">
+            {type === "local" && (
+              <select
+                value={shell}
+                onChange={(e) => setShell(e.target.value as ShellChoice)}
+                title="Choose shell"
+                className="text-[11px] py-1 px-1.5 rounded bg-[#1A1B1E] text-[#C1C2C5] border border-[#2C2E33] focus:outline-none focus:border-[#339AF0] cursor-pointer"
+              >
+                {LOCAL_SHELLS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            )}
             <button
-              onClick={handleSyncClick}
-              title="Synchronize file manager directory with terminal folder location"
+              onClick={() => termRef.current?.clear()}
+              title="Clear screen"
               className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-[#339AF0] hover:text-[#52a9f2] bg-[#339AF0]/10 hover:bg-[#339AF0]/20 rounded border border-[#339AF0]/20 transition-all cursor-pointer"
             >
-              <RefreshCw className="w-3 h-3" />
-              <span>Sync Commander</span>
+              <RotateCcw className="w-3 h-3" />
+              <span>Clear</span>
             </button>
-            <button
-              onClick={handleClear}
-              title="Clear screen buffer"
-              className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-[#A61A1A] hover:text-[#c92a2a] bg-[#A61A1A]/10 hover:bg-[#A61A1A]/20 rounded border border-[#A61A1A]/20 transition-all cursor-pointer"
-            >
-              <Trash2 className="w-3 h-3" />
-              <span>Clear Monitor</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="text-[#5C5F66] hover:text-white transition-colors p-1"
-            >
+            <button onClick={onClose} className="text-[#5C5F66] hover:text-white transition-colors p-1">
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Console Buffer */}
-        <div 
-          onClick={() => inputRef.current?.focus()}
-          className="flex-1 overflow-y-auto p-4 font-mono text-[13px] leading-relaxed text-[#20C20E] bg-[#0A0B0C] space-y-2 cursor-text"
-        >
-          {history.map((item, idx) => {
-            switch (item.type) {
-              case "input":
-                return (
-                  <div key={idx} className="flex gap-2 text-white items-start">
-                    <span className="text-amber-500 font-bold shrink-0">{">"}</span>
-                    <span className="break-all">{item.text}</span>
-                  </div>
-                );
-              case "stdout":
-                return (
-                  <pre key={idx} className="whitespace-pre-wrap break-all text-gray-300 font-mono">
-                    {item.text}
-                  </pre>
-                );
-              case "stderr":
-                return (
-                  <pre key={idx} className="whitespace-pre-wrap break-all text-amber-500 font-mono font-semibold">
-                    {item.text}
-                  </pre>
-                );
-              case "error":
-                return (
-                  <div key={idx} className="text-[#FF8787] font-semibold flex items-start gap-1">
-                    <span className="font-bold shrink-0">[Error]</span>
-                    <span className="break-all">{item.text}</span>
-                  </div>
-                );
-              case "info":
-                return (
-                  <div key={idx} className="text-[#339AF0] select-none text-xs border-b border-[#2C2E33]/30 pb-1 mt-3 first:mt-0 font-medium font-sans">
-                    {item.text}
-                  </div>
-                );
-              default:
-                return null;
-            }
-          })}
-          {executing && (
-            <div className="flex items-center gap-2 text-[#5C5F66] animate-pulse text-xs">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              <span>Executing process background job...</span>
-            </div>
-          )}
-          <div ref={historyEndRef} />
-        </div>
-
-        {/* Input prompt area */}
-        <div className="bg-[#0A0B0C] border-t border-[#1F2023] px-4 py-3 flex items-center gap-2">
-          <div className="text-[#339AF0] max-w-[40%] shrink-0 flex items-center gap-1 cursor-default select-none font-mono text-xs">
-            <span className="text-[#20C20E] font-medium truncate shrink" title={currentPath}>
-              {currentPath}
-            </span>
-            <span className="text-white brightness-75">$</span>
-          </div>
-          <div className="relative flex-1 flex items-center">
-            <input
-              ref={inputRef}
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={executing}
-              className="w-full bg-transparent border-none outline-none text-white font-mono text-xs pr-8 placeholder-[#2C2E33] focus:ring-0"
-              placeholder={executing ? "Processing..." : "Enter native shell command..."}
-              autoFocus
-            />
-            {!executing && inputValue && (
-              <span className="absolute right-0 text-[10px] text-[#5C5F66] flex items-center gap-1 animate-fadeIn select-none font-sans">
-                <span>Enter</span>
-                <CornerDownLeft className="w-3 h-3" />
-              </span>
-            )}
-          </div>
+        {/* xterm mount point */}
+        <div className="flex-1 bg-[#0A0B0C] p-2 overflow-hidden">
+          <div ref={containerRef} className="w-full h-full" />
         </div>
       </div>
     </div>

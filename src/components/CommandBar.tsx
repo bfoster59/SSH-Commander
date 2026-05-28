@@ -11,6 +11,7 @@ interface CommandBarProps {
   onF10Disconnect: () => void;
   jobProgress: OperationProgress | null;
   onCancelTransfer: () => void;
+  onDismissProgress: () => void;
   selectionSummaryDone?: string;
   activePaneId: 'left' | 'right';
 }
@@ -25,6 +26,7 @@ export default function CommandBar({
   onF10Disconnect,
   jobProgress,
   onCancelTransfer,
+  onDismissProgress,
   selectionSummaryDone,
 }: CommandBarProps) {
   return (
@@ -78,8 +80,16 @@ export default function CommandBar({
                   Cancel
                 </button>
               ) : (
-                <span className="text-[10px] text-[#40C057] font-sans tracking-wide">
-                  COMPLETED
+                <span className="flex items-center gap-2 shrink-0">
+                  <span className="text-[10px] text-[#40C057] font-sans tracking-wide">
+                    COMPLETED
+                  </span>
+                  <button
+                    onClick={onDismissProgress}
+                    className="px-2 py-0.5 rounded bg-[#40C057]/20 hover:bg-[#40C057]/35 border border-[#40C057]/45 text-[#40C057] font-sans font-bold cursor-pointer"
+                  >
+                    OK
+                  </button>
                 </span>
               )}
             </div>

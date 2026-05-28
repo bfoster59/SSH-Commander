@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { FileEntry, ConnectionProfile, OperationProgress } from "./types";
 import FileTable from "./components/FileTable";
 import CommandBar from "./components/CommandBar";
@@ -11,31 +11,14 @@ import ConnectionDialog from "./components/ConnectionDialog";
 import FileViewer from "./components/FileViewer";
 import FileEditor from "./components/FileEditor";
 import TerminalModal from "./components/TerminalModal";
-import { 
-  Network, 
-  Search, 
-  Terminal, 
-  Loader2, 
+import { useFilePane } from "./hooks/useFilePane";
+import {
+  Search,
+  Loader2,
   AlertTriangle,
   Radio,
   Clock
 } from "lucide-react";
-
-import { User } from "firebase/auth";
-import { initAuth, googleSignIn, logout } from "./lib/firebaseAuth";
-import { 
-  parseGDrivePath, 
-  buildGDrivePath, 
-  listGDriveFiles, 
-  createGDriveFolder, 
-  createGDriveFileMetadata, 
-  uploadGDriveFileContent, 
-  downloadGDriveFileAsText, 
-  downloadGDriveFileAsBlob, 
-  deleteGDriveItem, 
-  renameGDriveItem,
-  getGDriveFolderMetadata
-} from "./lib/driveApi";
 
 export default function App() {
   // Session timer ticker
@@ -56,140 +39,45 @@ export default function App() {
     return `${pad(h)}:${pad(m)}:${pad(s)}`;
   };
 
-  // Google Drive Credentials and Session States
-  const [gdriveToken, setGdriveToken] = useState<string | null>(null);
-  const [gdriveUser, setGdriveUser] = useState<User | null>(null);
+  const leftPane = useFilePane();
+  const rightPane = useFilePane();
 
-  useEffect(() => {
-    const unsub = initAuth(
-      (user, token) => {
-        setGdriveUser(user);
-        setGdriveToken(token);
-      },
-      () => {
-        setGdriveUser(null);
-        setGdriveToken(null);
-      }
-    );
-    return () => unsub();
-  }, []);
-
-  const handleGDriveSignIn = async () => {
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setGdriveUser(result.user);
-        setGdriveToken(result.accessToken);
-        if (leftType === 'gdrive') handleNavigate('left', 'gdrive://root');
-        if (rightType === 'gdrive') handleNavigate('right', 'gdrive://root');
-      }
-    } catch (err: any) {
-      alert(`Google Drive sign-in failed: ${err.message}`);
-    }
-  };
-
-  const handleGDriveSignOut = async () => {
-    try {
-      await logout();
-      setGdriveUser(null);
-      setGdriveToken(null);
-      if (leftType === 'gdrive') handleTogglePaneType('left', 'local');
-      if (rightType === 'gdrive') handleTogglePaneType('right', 'local');
-    } catch (err: any) {
-      alert(`Google sign-out failed: ${err.message}`);
-    }
-  };
-
-  // Left Pane State
-  const [leftType, setLeftType] = useState<'local' | 'remote' | 'gdrive'>('local');
-  const [leftPath, setLeftPath] = useState<string>(".");
-  const [leftFiles, setLeftFiles] = useState<FileEntry[]>([]);
-  const [leftSelectedIndex, setLeftSelectedIndex] = useState<number>(0);
-  const [leftSelectedIndices, setLeftSelectedIndices] = useState<number[]>([0]);
-  const [leftConnectionId, setLeftConnectionId] = useState<string | undefined>(undefined);
-  const [leftConnectionName, setLeftConnectionName] = useState<string | undefined>(undefined);
-
-  // Right Pane State
-  const [rightType, setRightType] = useState<'local' | 'remote' | 'gdrive'>('local');
-  const [rightPath, setRightPath] = useState<string>(".");
-  const [rightFiles, setRightFiles] = useState<FileEntry[]>([]);
-  const [rightSelectedIndex, setRightSelectedIndex] = useState<number>(0);
-  const [rightSelectedIndices, setRightSelectedIndices] = useState<number[]>([0]);
-  const [rightConnectionId, setRightConnectionId] = useState<string | undefined>(undefined);
-  const [rightConnectionName, setRightConnectionName] = useState<string | undefined>(undefined);
+  // Legacy flat aliases — the rest of this file predates useFilePane
+  const {
+    type: leftType, setType: setLeftType,
+    path: leftPath,
+    connectionId: leftConnectionId, setConnectionId: setLeftConnectionId,
+    connectionName: leftConnectionName, setConnectionName: setLeftConnectionName,
+    selectedIndex: leftSelectedIndex, setSelectedIndex: setLeftSelectedIndex,
+    selectedIndices: leftSelectedIndices, setSelectedIndices: setLeftSelectedIndices,
+    sortedFiles: sortedLeftFiles
+  } = leftPane;
+  const {
+    type: rightType, setType: setRightType,
+    path: rightPath,
+    connectionId: rightConnectionId, setConnectionId: setRightConnectionId,
+    connectionName: rightConnectionName, setConnectionName: setRightConnectionName,
+    selectedIndex: rightSelectedIndex, setSelectedIndex: setRightSelectedIndex,
+    selectedIndices: rightSelectedIndices, setSelectedIndices: setRightSelectedIndices,
+    sortedFiles: sortedRightFiles
+  } = rightPane;
 
   // Active Focus Selection Track
   const [activePane, setActivePane] = useState<'left' | 'right'>('left');
 
-  // Sorting Pane States
-  const [leftSortField, setLeftSortField] = useState<'name' | 'size' | 'modified' | null>(null);
-  const [leftSortOrder, setLeftSortOrder] = useState<'asc' | 'desc'>('asc');
 
-  const [rightSortField, setRightSortField] = useState<'name' | 'size' | 'modified' | null>(null);
-  const [rightSortOrder, setRightSortOrder] = useState<'asc' | 'desc'>('asc');
-
-  // Reusable file sorting helper keeping directories first
-  const sortFiles = useCallback((filesList: FileEntry[], field: 'name' | 'size' | 'modified' | null, order: 'asc' | 'desc') => {
-    return [...filesList].sort((a, b) => {
-      // Directories are always group-aligned to the top, even when sorting sorted files
-      if (a.isDirectory && !b.isDirectory) return -1;
-      if (!a.isDirectory && b.isDirectory) return 1;
-
-      if (!field) {
-        // Default sort (case-insensitive name ascending)
-        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-      }
-
-      let comp = 0;
-      if (field === 'name') {
-        comp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-      } else if (field === 'size') {
-        comp = a.size - b.size;
-      } else if (field === 'modified') {
-        const timeA = a.lastModified || 0;
-        const timeB = b.lastModified || 0;
-        comp = timeA - timeB;
-      }
-
-      return order === 'asc' ? comp : -comp;
-    });
-  }, []);
-
-  const sortedLeftFiles = useMemo(() => {
-    return sortFiles(leftFiles, leftSortField, leftSortOrder);
-  }, [leftFiles, leftSortField, leftSortOrder, sortFiles]);
-
-  const sortedRightFiles = useMemo(() => {
-    return sortFiles(rightFiles, rightSortField, rightSortOrder);
-  }, [rightFiles, rightSortField, rightSortOrder, sortFiles]);
-
-  const handleSort = useCallback((pane: 'left' | 'right', field: 'name' | 'size' | 'modified') => {
-    if (pane === 'left') {
-      if (leftSortField === field) {
-        setLeftSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-      } else {
-        setLeftSortField(field);
-        setLeftSortOrder('asc');
-      }
-    } else {
-      if (rightSortField === field) {
-        setRightSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-      } else {
-        setRightSortField(field);
-        setRightSortOrder('asc');
-      }
-    }
-  }, [leftSortField, rightSortField]);
 
   // Connection Dialog Management
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
 
-  // Text File viewing controls state
+  // File viewing controls state
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerFileName, setViewerFileName] = useState("");
   const [viewerFilePath, setViewerFilePath] = useState("");
   const [viewerContent, setViewerContent] = useState("");
   const [viewerIsRemote, setViewerIsRemote] = useState(false);
+  const [viewerCategory, setViewerCategory] = useState<'text' | 'image' | 'pdf' | 'video' | 'audio'>('text');
+  const [viewerRawUrl, setViewerRawUrl] = useState("");
 
   // Text File editing state
   const [editorOpen, setEditorOpen] = useState(false);
@@ -218,40 +106,41 @@ export default function App() {
   // Terminal state parameters
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalInitialPath, setTerminalInitialPath] = useState("");
+  const [terminalInitialCommand, setTerminalInitialCommand] = useState("");
   const [terminalPaneId, setTerminalPaneId] = useState<'left' | 'right'>('left');
+
+  // CMD: bar inputs (one per pane)
+  const [leftCmdInput, setLeftCmdInput] = useState("");
+  const [rightCmdInput, setRightCmdInput] = useState("");
 
   const handleOpenTerminal = (pane: 'left' | 'right', path: string) => {
     setTerminalPaneId(pane);
     setTerminalInitialPath(path);
+    setTerminalInitialCommand("");
     setTerminalOpen(true);
   };
 
-  const handleSyncCommanderPath = async (pane: 'left' | 'right', path: string) => {
-    await handleNavigate(pane, path);
+  const handleRunCmd = (pane: 'left' | 'right') => {
+    const cmd = (pane === 'left' ? leftCmdInput : rightCmdInput).trim();
+    if (!cmd) return;
+    const path = pane === 'left' ? leftPath : rightPath;
+    setTerminalPaneId(pane);
+    setTerminalInitialPath(path);
+    setTerminalInitialCommand(cmd);
+    setTerminalOpen(true);
+    if (pane === 'left') setLeftCmdInput(""); else setRightCmdInput("");
   };
 
   // Load initial environment folder context
   useEffect(() => {
     const initWorkspace = async () => {
-      try {
-        const res = await fetch("/api/local/list", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: "." })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setLeftPath(data.path);
-          setLeftFiles(data.files);
-          setRightPath(data.path);
-          setRightFiles(data.files);
-        }
-      } catch (err) {
-        console.error("Failed to initialize workspace", err);
-      }
+        Promise.all([
+            handleNavigate('left', '.'),
+            handleNavigate('right', '.')
+        ]);
     };
     initWorkspace();
-  }, []);
+  }, [leftPane.setPath, leftPane.setFiles, rightPane.setPath, rightPane.setFiles]);
 
   // Monitor background transfer progression state ticks
   useEffect(() => {
@@ -284,67 +173,27 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentJobId]);
 
+  // Auto-dismiss a finished transfer widget after a few seconds
+  useEffect(() => {
+    if (jobProgress && !jobProgress.active) {
+      const t = setTimeout(() => setJobProgress(null), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [jobProgress]);
+
   // Navigate Pane Tree Loader Method
-  const handleNavigate = async (pane: 'left' | 'right', targetPath: string) => {
-    const type = pane === 'left' ? leftType : rightType;
-    const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
-
+  const handleNavigate = async (
+    pane: 'left' | 'right',
+    targetPath: string,
+    override?: { type?: 'local' | 'remote'; connectionId?: string }
+  ) => {
+    const paneState = pane === 'left' ? leftPane : rightPane;
+    // Allow callers to pass freshly-set type/connectionId so we don't read
+    // stale values from the previous render's closure.
+    const effectiveType = override?.type ?? paneState.type;
+    const effectiveConnId = override?.connectionId ?? paneState.connectionId;
     try {
-      if (type === 'gdrive') {
-        let actualPath = targetPath;
-        let activeToken = gdriveToken;
-        if (!activeToken) {
-          if (pane === 'left') {
-            setLeftPath(targetPath);
-            setLeftFiles([]);
-            setLeftSelectedIndex(0);
-            setLeftSelectedIndices([0]);
-          } else {
-            setRightPath(targetPath);
-            setRightFiles([]);
-            setRightSelectedIndex(0);
-            setRightSelectedIndices([0]);
-          }
-          return;
-        }
-
-        if (targetPath.endsWith("/..")) {
-          const pathWithoutSlashDotDot = targetPath.slice(0, -3);
-          const { folderId: currentFolderId, humanPath: currentHumanPath } = parseGDrivePath(pathWithoutSlashDotDot);
-          
-          if (currentFolderId === 'root' || !currentFolderId) {
-             return;
-          }
-
-          const meta = await getGDriveFolderMetadata(activeToken, currentFolderId);
-          const parentId = meta.parentId || 'root';
-
-          const humanParts = currentHumanPath.split('/').filter(Boolean);
-          if (humanParts.length > 0) {
-            humanParts.pop();
-          }
-          const parentHumanPath = humanParts.join('/');
-          actualPath = buildGDrivePath(parentHumanPath || 'My Drive', parentId);
-        }
-
-        const { folderId } = parseGDrivePath(actualPath);
-        const files = await listGDriveFiles(activeToken, folderId);
-
-        if (pane === 'left') {
-          setLeftPath(actualPath);
-          setLeftFiles(files);
-          setLeftSelectedIndex(0);
-          setLeftSelectedIndices([0]);
-        } else {
-          setRightPath(actualPath);
-          setRightFiles(files);
-          setRightSelectedIndex(0);
-          setRightSelectedIndices([0]);
-        }
-        return;
-      }
-
-      if (type === 'local') {
+      if (effectiveType === 'local') {
         const res = await fetch('/api/local/list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -355,71 +204,26 @@ export default function App() {
           throw new Error(err.error || 'Failed directory navigation');
         }
         const data = await res.json();
-        if (pane === 'left') {
-          setLeftPath(data.path);
-          setLeftFiles(data.files);
-          setLeftSelectedIndex(0);
-          setLeftSelectedIndices([0]);
-        } else {
-          setRightPath(data.path);
-          setRightFiles(data.files);
-          setRightSelectedIndex(0);
-          setRightSelectedIndices([0]);
-        }
-
-        // Apply any pending highlighter selections (e.g., from double-clicking searches)
-        if (pendingSelection && pendingSelection.pane === pane) {
-          const matchIdx = data.files.findIndex((f: any) => f.name === pendingSelection.name);
-          if (matchIdx !== -1) {
-            // Align by adding 1 offset representation for Root ".." file row at top
-            if (pane === 'left') {
-              setLeftSelectedIndex(matchIdx + 1);
-              setLeftSelectedIndices([matchIdx + 1]);
-            } else {
-              setRightSelectedIndex(matchIdx + 1);
-              setRightSelectedIndices([matchIdx + 1]);
-            }
-          }
-          setPendingSelection(null);
-        }
+        paneState.setPath(data.path);
+        paneState.setFiles(data.files);
+        paneState.setSelectedIndex(0);
+        paneState.setSelectedIndices([0]);
       } else {
-        if (!connId) throw new Error("Remote connection expired. Please connect index.");
+        if (!effectiveConnId) throw new Error("Remote connection expired. Please connect index.");
         const res = await fetch('/api/ssh/list', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: connId, path: targetPath })
+          body: JSON.stringify({ connectionId: effectiveConnId, path: targetPath })
         });
         if (!res.ok) {
           const err = await res.json();
           throw new Error(err.error || 'Failed scanning SSH directory list');
         }
         const data = await res.json();
-        if (pane === 'left') {
-          setLeftPath(targetPath);
-          setLeftFiles(data.files);
-          setLeftSelectedIndex(0);
-          setLeftSelectedIndices([0]);
-        } else {
-          setRightPath(targetPath);
-          setRightFiles(data.files);
-          setRightSelectedIndex(0);
-          setRightSelectedIndices([0]);
-        }
-
-        // Apply pending selection offsets
-        if (pendingSelection && pendingSelection.pane === pane) {
-          const matchIdx = data.files.findIndex((f: any) => f.name === pendingSelection.name);
-          if (matchIdx !== -1) {
-            if (pane === 'left') {
-              setLeftSelectedIndex(matchIdx + 1);
-              setLeftSelectedIndices([matchIdx + 1]);
-            } else {
-              setRightSelectedIndex(matchIdx + 1);
-              setRightSelectedIndices([matchIdx + 1]);
-            }
-          }
-          setPendingSelection(null);
-        }
+        paneState.setPath(targetPath);
+        paneState.setFiles(data.files);
+        paneState.setSelectedIndex(0);
+        paneState.setSelectedIndices([0]);
       }
     } catch (err: any) {
       alert(`Directory index load state error: ${err.message}`);
@@ -427,47 +231,25 @@ export default function App() {
   };
 
   const triggerRefresh = (pane: 'left' | 'right') => {
-    const path = pane === 'left' ? leftPath : rightPath;
+    const path = pane === 'left' ? leftPane.path : rightPane.path;
     handleNavigate(pane, path);
   };
 
-  const handleTogglePaneType = (pane: 'left' | 'right', newType: 'local' | 'remote' | 'gdrive') => {
-    if (pane === 'left') {
-      if (newType === 'local') {
-        setLeftType('local');
-        setLeftConnectionId(undefined);
-        setLeftConnectionName(undefined);
-        handleNavigate('left', '.');
-      } else if (newType === 'gdrive') {
-        setLeftType('gdrive');
-        setLeftConnectionId(undefined);
-        setLeftConnectionName(undefined);
-        setLeftPath('gdrive://root');
-        handleNavigate('left', 'gdrive://root');
-      } else {
-        setIsConnectionOpen(true);
-      }
+  const handleTogglePaneType = (pane: 'left' | 'right', newType: 'local' | 'remote') => {
+    const paneState = pane === 'left' ? leftPane : rightPane;
+    if (newType === 'local') {
+      paneState.setType('local');
+      paneState.setConnectionId(undefined);
+      paneState.setConnectionName(undefined);
+      handleNavigate(pane, '.', { type: 'local' });
     } else {
-      if (newType === 'local') {
-        setRightType('local');
-        setRightConnectionId(undefined);
-        setRightConnectionName(undefined);
-        handleNavigate('right', '.');
-      } else if (newType === 'gdrive') {
-        setRightType('gdrive');
-        setRightConnectionId(undefined);
-        setRightConnectionName(undefined);
-        setRightPath('gdrive://root');
-        handleNavigate('right', 'gdrive://root');
-      } else {
-        setIsConnectionOpen(true);
-      }
+      setIsConnectionOpen(true);
     }
   };
 
   const handleConnectSSH = async (profile: ConnectionProfile) => {
     setIsConnectionOpen(false);
-    const pane = activePane;
+    const paneState = activePane === 'left' ? leftPane : rightPane;
 
     try {
       const res = await fetch('/api/ssh/connect', {
@@ -482,19 +264,14 @@ export default function App() {
       }
 
       const data = await res.json();
-      if (pane === 'left') {
-        setLeftType('remote');
-        setLeftConnectionId(data.connectionId);
-        setLeftConnectionName(profile.name);
-        setLeftPath(data.homePath);
-        handleNavigate('left', data.homePath);
-      } else {
-        setRightType('remote');
-        setRightConnectionId(data.connectionId);
-        setRightConnectionName(profile.name);
-        setRightPath(data.homePath);
-        handleNavigate('right', data.homePath);
-      }
+      paneState.setType('remote');
+      paneState.setConnectionId(data.connectionId);
+      paneState.setConnectionName(profile.name);
+      paneState.setPath(data.homePath);
+      await handleNavigate(activePane, data.homePath, {
+        type: 'remote',
+        connectionId: data.connectionId
+      });
     } catch (err: any) {
       alert(`SSH Connection link error: ${err.message}`);
     }
@@ -552,14 +329,38 @@ export default function App() {
     }
   };
 
+  const classifyFile = (name: string): 'text' | 'image' | 'pdf' | 'video' | 'audio' => {
+    const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+    if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif'].includes(ext)) return 'image';
+    if (ext === '.pdf') return 'pdf';
+    if (['.mp4', '.webm', '.mov'].includes(ext)) return 'video';
+    if (['.mp3', '.wav', '.ogg'].includes(ext)) return 'audio';
+    return 'text';
+  };
+
   const handleF3ViewForFile = async (name: string, filePath: string, isRemote: boolean, connId?: string) => {
+    const category = classifyFile(name);
+
+    // Binary/media: stream raw bytes via the GET endpoint, no text fetch.
+    if (category !== 'text') {
+      const params = new URLSearchParams({
+        type: isRemote ? 'remote' : 'local',
+        path: filePath
+      });
+      if (isRemote && connId) params.set('connectionId', connId);
+      setViewerCategory(category);
+      setViewerRawUrl(`/api/raw?${params.toString()}`);
+      setViewerContent("");
+      setViewerFileName(name);
+      setViewerFilePath(filePath);
+      setViewerIsRemote(isRemote);
+      setViewerOpen(true);
+      return;
+    }
+
     try {
       let content = "";
-      if (filePath.startsWith("gdrive://")) {
-        const { folderId } = parseGDrivePath(filePath);
-        if (!gdriveToken) throw new Error("Google Drive is not connected. Please log in first.");
-        content = await downloadGDriveFileAsText(gdriveToken, folderId);
-      } else if (isRemote) {
+      if (isRemote) {
         const res = await fetch('/api/ssh/read', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -585,14 +386,28 @@ export default function App() {
         content = data.content;
       }
 
+      setViewerCategory('text');
+      setViewerRawUrl("");
       setViewerFileName(name);
       setViewerFilePath(filePath);
       setViewerContent(content);
       setViewerIsRemote(isRemote);
       setViewerOpen(true);
     } catch (err: any) {
-      alert(`Text view trigger error: ${err.message}`);
+      alert(`View trigger error: ${err.message}`);
     }
+  };
+
+  const handleOpenFileFromTable = (pane: 'left' | 'right', entry: FileEntry) => {
+    const basePath = pane === 'left' ? leftPath : rightPath;
+    const separator = basePath.includes("/") ? "/" : "\\";
+    const fullPath = basePath.endsWith(separator) ? basePath + entry.name : basePath + separator + entry.name;
+    handleF3ViewForFile(
+      entry.name,
+      fullPath,
+      pane === 'left' ? leftType === 'remote' : rightType === 'remote',
+      pane === 'left' ? leftConnectionId : rightConnectionId
+    );
   };
 
   // Keyboard operations definitions (F3, F4, F5, F6, F7, F8, F10)
@@ -635,11 +450,7 @@ export default function App() {
       const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
       let content = "";
-      if (fullSourcePath.startsWith("gdrive://")) {
-        const { folderId } = parseGDrivePath(fullSourcePath);
-        if (!gdriveToken) throw new Error("Google Drive is not connected. Please log in first.");
-        content = await downloadGDriveFileAsText(gdriveToken, folderId);
-      } else if (isRemote) {
+      if (isRemote) {
         const res = await fetch('/api/ssh/read', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -724,139 +535,6 @@ export default function App() {
     triggerTransferJob(srcPane, dstPane, fullSourcePaths);
   };
 
-  const runClientGDriveTransfer = async (
-    srcPane: 'left' | 'right',
-    dstPane: 'left' | 'right',
-    selectedEntries: any[],
-    srcPath: string,
-    dstPath: string
-  ) => {
-    const srcType = srcPane === 'left' ? leftType : rightType;
-    const dstType = dstPane === 'left' ? leftType : rightType;
-    const srcConnId = srcPane === 'left' ? leftConnectionId : rightConnectionId;
-    const dstConnId = dstPane === 'left' ? leftConnectionId : rightConnectionId;
-
-    setJobProgress({
-      active: true,
-      title: "Google Drive Co-processor running...",
-      percentage: 0,
-      currentItem: "Opening stream handles...",
-      bytesTransferred: 0,
-      totalBytes: selectedEntries.length
-    });
-
-    try {
-      const activeToken = gdriveToken;
-      if (!activeToken) throw new Error("Google Drive auth is not active. Please connect Drive.");
-
-      const { folderId: dstFolderId } = dstType === 'gdrive' ? parseGDrivePath(dstPath) : { folderId: '' };
-
-      for (let i = 0; i < selectedEntries.length; i++) {
-        const file = selectedEntries[i];
-        const pct = Math.round((i / selectedEntries.length) * 100);
-
-        setJobProgress(prev => prev ? {
-          ...prev,
-          percentage: pct,
-          currentItem: `Transferring "${file.name}" (${i + 1}/${selectedEntries.length})...`
-        } : null);
-
-        if (srcType === 'gdrive') {
-          const driveId = (file as any).driveId;
-          if (!driveId) continue;
-
-          if (file.isDirectory) {
-            alert(`Transfer directory recursively from Drive is limited in preview. Skipping folder: ${file.name}`);
-            continue;
-          }
-
-          const blob = await downloadGDriveFileAsBlob(activeToken, driveId);
-          const content = await blob.text();
-
-          if (dstType === 'local') {
-            const separator = dstPath.includes('/') ? '/' : '\\';
-            const dstFilePath = dstPath.endsWith(separator) ? dstPath + file.name : dstPath + separator + file.name;
-            await fetch('/api/local/write', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ path: dstFilePath, content })
-            });
-          } else if (dstType === 'remote') {
-            const separator = '/';
-            const dstFilePath = dstPath.endsWith(separator) ? dstPath + file.name : dstPath + separator + file.name;
-            await fetch('/api/ssh/write', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ connectionId: dstConnId, path: dstFilePath, content })
-            });
-          } else if (dstType === 'gdrive') {
-            await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}/copy`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${activeToken}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                name: "Copy of " + file.name,
-                parents: [dstFolderId]
-              })
-            });
-          }
-        } else {
-          if (file.isDirectory) {
-            await createGDriveFolder(activeToken, dstFolderId, file.name);
-            continue;
-          }
-
-          const separator = srcPath.includes('/') ? '/' : '\\';
-          const srcFilePath = srcPath.endsWith(separator) ? srcPath + file.name : srcPath + separator + file.name;
-
-          let content = "";
-          if (srcType === 'local') {
-            const res = await fetch('/api/local/read', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ path: srcFilePath })
-            });
-            if (res.ok) {
-              const json = await res.json();
-              content = json.content;
-            }
-          } else if (srcType === 'remote') {
-            const res = await fetch('/api/ssh/read', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ connectionId: srcConnId, path: srcFilePath })
-            });
-            if (res.ok) {
-              const json = await res.json();
-              content = json.content;
-            }
-          }
-
-          const fileId = await createGDriveFileMetadata(activeToken, dstFolderId, file.name);
-          await uploadGDriveFileContent(activeToken, fileId, content);
-        }
-      }
-
-      setJobProgress({
-        active: false,
-        title: "Client Transfer Completed",
-        percentage: 100,
-        currentItem: "Files copied successfully.",
-        bytesTransferred: selectedEntries.length,
-        totalBytes: selectedEntries.length
-      });
-
-      setTimeout(() => setJobProgress(null), 2000);
-      triggerRefresh('left');
-      triggerRefresh('right');
-    } catch (err: any) {
-      alert(`GDrive co-processor transfer failed: ${err.message}`);
-      setJobProgress(null);
-    }
-  };
-
   const triggerTransferJob = async (
     srcPane: 'left' | 'right',
     dstPane: 'left' | 'right',
@@ -865,13 +543,6 @@ export default function App() {
     const srcType = srcPane === 'left' ? leftType : rightType;
     const dstType = dstPane === 'left' ? leftType : rightType;
     const targetFolder = dstPane === 'left' ? leftPath : rightPath;
-
-    if (srcType === 'gdrive' || dstType === 'gdrive') {
-      const selectedEntries = getSelectedEntries(srcPane);
-      const srcPath = srcPane === 'left' ? leftPath : rightPath;
-      await runClientGDriveTransfer(srcPane, dstPane, selectedEntries, srcPath, targetFolder);
-      return;
-    }
 
     const srcConnId = srcPane === 'left' ? leftConnectionId : rightConnectionId;
     const dstConnId = dstPane === 'left' ? leftConnectionId : rightConnectionId;
@@ -940,22 +611,6 @@ export default function App() {
     const selectedEntries = getSelectedEntries(pane);
     if (selectedEntries.length === 0) {
       alert("Please select files/directories to move/rename");
-      return;
-    }
-
-    const type = pane === 'left' ? leftType : rightType;
-    if (type === 'gdrive') {
-      const selectedFile = selectedEntries[0] as any;
-      if (!selectedFile?.driveId) return;
-      const responseName = window.prompt(`Rename Google Drive item: Enter new name for "${selectedFile.name}"`, selectedFile.name);
-      if (!responseName) return;
-      try {
-        if (!gdriveToken) throw new Error("Google Drive auth is not active. Please log in first.");
-        await renameGDriveItem(gdriveToken, selectedFile.driveId, responseName);
-        triggerRefresh(pane);
-      } catch (err: any) {
-        alert(`Rename exception: ${err.message}`);
-      }
       return;
     }
 
@@ -1060,18 +715,6 @@ export default function App() {
     const name = window.prompt("Mkdir: Enter new foldermap name to create inside the current directory:");
     if (!name) return;
 
-    if (type === 'gdrive') {
-      try {
-        if (!gdriveToken) throw new Error("Google Drive auth is not active. Please log in first.");
-        const { folderId } = parseGDrivePath(basePath);
-        await createGDriveFolder(gdriveToken, folderId, name);
-        triggerRefresh(pane);
-      } catch (err: any) {
-        alert(`Folder creation error: ${err.message}`);
-      }
-      return;
-    }
-
     const separator = basePath.includes("/") ? "/" : "\\";
     const resolved = basePath.endsWith(separator) ? basePath + name : basePath + separator + name;
 
@@ -1119,24 +762,6 @@ export default function App() {
       ? window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting "${selectedEntries[0].name}"?`)
       : window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting ${selectedEntries.length} selected items?`);
     if (!isConfirmed) return;
-
-    const type = pane === 'left' ? leftType : rightType;
-    if (type === 'gdrive') {
-      try {
-        if (!gdriveToken) throw new Error("Google Drive auth is not active. Please log in first.");
-        for (const file of selectedEntries) {
-          const selectedFile = file as any;
-          if (selectedFile.driveId) {
-            await deleteGDriveItem(gdriveToken, selectedFile.driveId);
-          }
-        }
-        triggerRefresh(pane);
-      } catch (err: any) {
-        alert(`Deletion error: ${err.message}`);
-        triggerRefresh(pane);
-      }
-      return;
-    }
 
     const basePath = pane === 'left' ? leftPath : rightPath;
     const separator = basePath.includes("/") ? "/" : "\\";
@@ -1201,12 +826,12 @@ export default function App() {
         setLeftType('local');
         setLeftConnectionId(undefined);
         setLeftConnectionName(undefined);
-        handleNavigate('left', '.');
+        handleNavigate('left', '.', { type: 'local' });
       } else {
         setRightType('local');
         setRightConnectionId(undefined);
         setRightConnectionName(undefined);
-        handleNavigate('right', '.');
+        handleNavigate('right', '.', { type: 'local' });
       }
     } catch (e: any) {
       console.error(e);
@@ -1216,11 +841,7 @@ export default function App() {
   const handleEditorSave = async (filePath: string, content: string, isRemote: boolean) => {
     try {
       const connId = activePane === 'left' ? leftConnectionId : rightConnectionId;
-      if (filePath.startsWith("gdrive://")) {
-        const { folderId } = parseGDrivePath(filePath);
-        if (!gdriveToken) throw new Error("Google Drive connection expired. Please log in again.");
-        await uploadGDriveFileContent(gdriveToken, folderId, content);
-      } else if (isRemote) {
+      if (isRemote) {
         const res = await fetch('/api/ssh/write', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1564,10 +1185,8 @@ export default function App() {
       {/* Main Dual Pane Splitter */}
       <main className="flex-1 flex flex-col md:flex-row overflow-hidden p-2 gap-2" id="workspace-main">
         {/* Left Side Table Frame */}
-        <section 
-          className={`flex-1 flex flex-col rounded overflow-hidden relative transition-all duration-150 ${
-            activePane === 'left' ? 'ring-1 ring-[#339AF0]/30 shadow-[0_0_12px_rgba(51,154,240,0.1)]' : ''
-          }`}
+        <section
+          className={`flex-1 flex flex-col rounded overflow-hidden relative transition-all duration-150 ${activePane === 'left' ? 'ring-1 ring-[#339AF0]/30 shadow-[0_0_12px_rgba(51,154,240,0.1)]' : ''}`}
           onClick={() => setActivePane('left')}
         >
           <FileTable
@@ -1577,39 +1196,44 @@ export default function App() {
             files={sortedLeftFiles}
             selectedIndex={leftSelectedIndex}
             selectedIndices={leftSelectedIndices}
-            focused={activePane === 'left'}
-            onFocus={() => setActivePane('left')}
-            onSelect={(idx, indices) => {
-              setLeftSelectedIndex(idx);
-              setLeftSelectedIndices(indices);
-            }}
-            onNavigate={(path) => handleNavigate('left', path)}
-            onRefresh={() => triggerRefresh('left')}
-            onToggleType={(newType) => handleTogglePaneType('left', newType)}
             connectionId={leftConnectionId}
             connectionName={leftConnectionName}
             localDrives={localDrives}
-            isGDriveSignedIn={Boolean(gdriveToken)}
-            gdriveUserEmail={gdriveUser?.email || ""}
-            onGDriveSignIn={handleGDriveSignIn}
-            onGDriveSignOut={handleGDriveSignOut}
-            sortField={leftSortField}
-            sortOrder={leftSortOrder}
-            onSort={(field) => handleSort('left', field)}
+            sortField={leftPane.sortField}
+            sortOrder={leftPane.sortOrder}
+            onSort={leftPane.handleSort}
+            onSelect={(idx, indices) => { setLeftSelectedIndex(idx); setLeftSelectedIndices(indices); }}
+            focused={activePane === 'left'}
+            onFocus={() => setActivePane('left')}
+            onNavigate={(path) => handleNavigate('left', path)}
+            onOpenFile={(entry) => handleOpenFileFromTable('left', entry)}
+            onRefresh={() => triggerRefresh('left')}
+            onToggleType={(newType) => handleTogglePaneType('left', newType as 'local' | 'remote')}
+            onOpenTerminal={(path) => handleOpenTerminal('left', path)}
             onF3View={triggerF3View}
             onF4Edit={triggerF4Edit}
             onF5Copy={triggerF5Copy}
             onF6Move={triggerF6Move}
             onF8Delete={triggerF8Delete}
-            onOpenTerminal={(path) => handleOpenTerminal('left', path)}
           />
+          {/* Per-pane command line */}
+          <div className="bg-[#14161A] border-t border-[#2C2E33] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
+            <span className="text-[#339AF0] font-bold shrink-0">CMD:</span>
+            <span className="text-[#5C5F66] truncate max-w-[40%] shrink" title={leftPath}>{leftPath}</span>
+            <span className="text-white brightness-75 shrink-0">$</span>
+            <input
+              type="text"
+              value={leftCmdInput}
+              onChange={(e) => setLeftCmdInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRunCmd('left'); } }}
+              onFocus={() => setActivePane('left')}
+              placeholder="Type a command and press Enter (e.g. claude, ls, git status)"
+              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[#3A3D44] focus:ring-0"
+            />
+          </div>
         </section>
-
-        {/* Right Side Table Frame */}
-        <section 
-          className={`flex-1 flex flex-col rounded overflow-hidden relative transition-all duration-150 ${
-            activePane === 'right' ? 'ring-1 ring-[#339AF0]/30 shadow-[0_0_12px_rgba(51,154,240,0.1)]' : ''
-          }`}
+        <section
+          className={`flex-1 flex flex-col rounded overflow-hidden relative transition-all duration-150 ${activePane === 'right' ? 'ring-1 ring-[#339AF0]/30 shadow-[0_0_12px_rgba(51,154,240,0.1)]' : ''}`}
           onClick={() => setActivePane('right')}
         >
           <FileTable
@@ -1619,32 +1243,41 @@ export default function App() {
             files={sortedRightFiles}
             selectedIndex={rightSelectedIndex}
             selectedIndices={rightSelectedIndices}
-            focused={activePane === 'right'}
-            onFocus={() => setActivePane('right')}
-            onSelect={(idx, indices) => {
-              setRightSelectedIndex(idx);
-              setRightSelectedIndices(indices);
-            }}
-            onNavigate={(path) => handleNavigate('right', path)}
-            onRefresh={() => triggerRefresh('right')}
-            onToggleType={(newType) => handleTogglePaneType('right', newType)}
             connectionId={rightConnectionId}
             connectionName={rightConnectionName}
             localDrives={localDrives}
-            isGDriveSignedIn={Boolean(gdriveToken)}
-            gdriveUserEmail={gdriveUser?.email || ""}
-            onGDriveSignIn={handleGDriveSignIn}
-            onGDriveSignOut={handleGDriveSignOut}
-            sortField={rightSortField}
-            sortOrder={rightSortOrder}
-            onSort={(field) => handleSort('right', field)}
+            sortField={rightPane.sortField}
+            sortOrder={rightPane.sortOrder}
+            onSort={rightPane.handleSort}
+            onSelect={(idx, indices) => { setRightSelectedIndex(idx); setRightSelectedIndices(indices); }}
+            focused={activePane === 'right'}
+            onFocus={() => setActivePane('right')}
+            onNavigate={(path) => handleNavigate('right', path)}
+            onOpenFile={(entry) => handleOpenFileFromTable('right', entry)}
+            onRefresh={() => triggerRefresh('right')}
+            onToggleType={(newType) => handleTogglePaneType('right', newType as 'local' | 'remote')}
+            onOpenTerminal={(path) => handleOpenTerminal('right', path)}
             onF3View={triggerF3View}
             onF4Edit={triggerF4Edit}
             onF5Copy={triggerF5Copy}
             onF6Move={triggerF6Move}
             onF8Delete={triggerF8Delete}
-            onOpenTerminal={(path) => handleOpenTerminal('right', path)}
           />
+          {/* Per-pane command line */}
+          <div className="bg-[#14161A] border-t border-[#2C2E33] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
+            <span className="text-[#339AF0] font-bold shrink-0">CMD:</span>
+            <span className="text-[#5C5F66] truncate max-w-[40%] shrink" title={rightPath}>{rightPath}</span>
+            <span className="text-white brightness-75 shrink-0">$</span>
+            <input
+              type="text"
+              value={rightCmdInput}
+              onChange={(e) => setRightCmdInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRunCmd('right'); } }}
+              onFocus={() => setActivePane('right')}
+              placeholder="Type a command and press Enter (e.g. claude, ls, git status)"
+              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[#3A3D44] focus:ring-0"
+            />
+          </div>
         </section>
       </main>
 
@@ -1659,6 +1292,7 @@ export default function App() {
         onF10Disconnect={triggerF10Exit}
         jobProgress={jobProgress}
         onCancelTransfer={handleCancelTransfer}
+        onDismissProgress={() => setJobProgress(null)}
         selectionSummaryDone={getSelectionSummary()}
         activePaneId={activePane}
       />
@@ -1678,6 +1312,8 @@ export default function App() {
         filePath={viewerFilePath}
         content={viewerContent}
         isRemote={viewerIsRemote}
+        category={viewerCategory}
+        rawUrl={viewerRawUrl}
       />
 
       {/* Custom F4 text composer editor modal */}
@@ -1700,7 +1336,7 @@ export default function App() {
         connectionId={terminalPaneId === 'left' ? leftConnectionId : rightConnectionId}
         connectionName={terminalPaneId === 'left' ? leftConnectionName : rightConnectionName}
         initialPath={terminalInitialPath}
-        onSyncCommanderPath={handleSyncCommanderPath}
+        initialCommand={terminalInitialCommand}
       />
 
       {/* Highly polished, responsive recursive search modal overlay */}

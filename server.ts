@@ -4,6 +4,9 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { Client, SFTPWrapper } from "ssh2";
+import { WebSocketServer, WebSocket } from "ws";
+import * as pty from "node-pty";
+import type { IncomingMessage } from "http";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -381,6 +384,53 @@ app.post("/api/ssh/read", (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Raw byte streaming for binary previews (images, PDFs, etc.).
+// GET so it can be used directly as an <img>/<iframe> src.
+const MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+  ".svg": "image/svg+xml", ".ico": "image/x-icon", ".avif": "image/avif",
+  ".pdf": "application/pdf",
+  ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+  ".txt": "text/plain", ".json": "application/json",
+};
+
+function mimeForPath(p: string): string {
+  const ext = path.extname(p).toLowerCase();
+  return MIME_BY_EXT[ext] || "application/octet-stream";
+}
+
+app.get("/api/raw", (req, res) => {
+  try {
+    const type = String(req.query.type || "local");
+    const filePath = String(req.query.path || "");
+    if (!filePath) return res.status(400).json({ error: "Missing path" });
+    res.setHeader("Content-Type", mimeForPath(filePath));
+
+    if (type === "remote") {
+      const connectionId = String(req.query.connectionId || "");
+      const { sftp } = getSSHSession(connectionId);
+      const stream = sftp.createReadStream(filePath);
+      stream.on("error", (err: any) => {
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+      });
+      stream.pipe(res);
+    } else {
+      const resolved = path.resolve(filePath);
+      const stream = fs.createReadStream(resolved);
+      stream.on("error", (err: any) => {
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+      });
+      stream.pipe(res);
+    }
+  } catch (err: any) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 
@@ -1070,6 +1120,117 @@ app.post("/api/terminal/exec", async (req, res) => {
 });
 
 
+// ---- INTERACTIVE PTY OVER WEBSOCKET ----
+
+function resolveLocalShell(shell: string): { file: string; args: string[] } {
+  if (process.platform === "win32") {
+    switch (shell) {
+      case "cmd": return { file: "cmd.exe", args: [] };
+      case "pwsh": return { file: "pwsh.exe", args: ["-NoLogo"] };
+      case "bash": return { file: "bash.exe", args: [] };
+      case "powershell":
+      default: return { file: "powershell.exe", args: ["-NoLogo"] };
+    }
+  }
+  // POSIX
+  switch (shell) {
+    case "bash": return { file: "/bin/bash", args: [] };
+    case "sh": return { file: "/bin/sh", args: [] };
+    default: return { file: process.env.SHELL || "/bin/bash", args: [] };
+  }
+}
+
+function attachPtyWebSocket(server: import("http").Server) {
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (req: IncomingMessage, socket, head) => {
+    const url = new URL(req.url || "", "http://localhost");
+    // Only handle our PTY path; let everything else (e.g. Vite HMR) pass.
+    if (url.pathname !== "/api/pty") return;
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  });
+
+  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+    const url = new URL(req.url || "", "http://localhost");
+    const type = url.searchParams.get("type") || "local";
+    const cwd = url.searchParams.get("cwd") || process.cwd();
+    const shell = url.searchParams.get("shell") || "";
+    const initialCommand = url.searchParams.get("cmd") || "";
+
+    if (type === "remote") {
+      const connectionId = url.searchParams.get("connectionId") || "";
+      let session;
+      try {
+        session = getSSHSession(connectionId);
+      } catch (e: any) {
+        ws.send(`\r\n[connection error] ${e.message}\r\n`);
+        ws.close();
+        return;
+      }
+      session.client.shell({ term: "xterm-color", cols: 80, rows: 24 }, (err, stream) => {
+        if (err) {
+          ws.send(`\r\n[shell error] ${err.message}\r\n`);
+          ws.close();
+          return;
+        }
+        // Move to the pane's directory, then optionally run a command.
+        if (cwd) stream.write(`cd "${cwd.replace(/"/g, '\\"')}"\n`);
+        if (initialCommand) stream.write(`${initialCommand}\n`);
+
+        stream.on("data", (d: Buffer) => ws.readyState === ws.OPEN && ws.send(d.toString("utf-8")));
+        stream.stderr.on("data", (d: Buffer) => ws.readyState === ws.OPEN && ws.send(d.toString("utf-8")));
+        stream.on("close", () => ws.close());
+
+        ws.on("message", (raw) => {
+          try {
+            const msg = JSON.parse(raw.toString());
+            if (msg.kind === "input") stream.write(msg.data);
+            else if (msg.kind === "resize") stream.setWindow(msg.rows, msg.cols, 0, 0);
+          } catch { /* ignore malformed frames */ }
+        });
+        ws.on("close", () => { try { stream.end(); } catch { /* noop */ } });
+      });
+      return;
+    }
+
+    // Local PTY
+    const { file, args } = resolveLocalShell(shell);
+    let term: pty.IPty;
+    try {
+      term = pty.spawn(file, args, {
+        name: "xterm-color",
+        cols: 80,
+        rows: 24,
+        cwd: path.resolve(cwd),
+        env: process.env as Record<string, string>,
+      });
+    } catch (e: any) {
+      ws.send(`\r\n[spawn error] ${e.message}\r\n`);
+      ws.close();
+      return;
+    }
+
+    if (initialCommand) {
+      const nl = process.platform === "win32" ? "\r" : "\n";
+      setTimeout(() => term.write(`${initialCommand}${nl}`), 300);
+    }
+
+    term.onData((d) => ws.readyState === ws.OPEN && ws.send(d));
+    term.onExit(() => ws.close());
+
+    ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.kind === "input") term.write(msg.data);
+        else if (msg.kind === "resize") term.resize(msg.cols, msg.rows);
+      } catch { /* ignore malformed frames */ }
+    });
+    ws.on("close", () => { try { term.kill(); } catch { /* noop */ } });
+  });
+}
+
 // ---- VITE SETUP & STATIC MIDDLEWARE ----
 
 async function start() {
@@ -1087,9 +1248,10 @@ async function start() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Express server running on http://localhost:${PORT}`);
   });
+  attachPtyWebSocket(server);
 }
 
 start().catch((err) => {

@@ -8,9 +8,11 @@ interface FileViewerProps {
   filePath: string;
   content: string;
   isRemote: boolean;
+  category?: 'text' | 'image' | 'pdf' | 'video' | 'audio';
+  rawUrl?: string;
 }
 
-export default function FileViewer({ isOpen, onClose, fileName, filePath, content, isRemote }: FileViewerProps) {
+export default function FileViewer({ isOpen, onClose, fileName, filePath, content, isRemote, category = 'text', rawUrl = "" }: FileViewerProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [matchIndexes, setMatchIndexes] = useState<number[]>([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
@@ -82,6 +84,7 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
 
   if (!isOpen) return null;
 
+  const isText = category === 'text';
   const lines = content.split("\n");
 
   return (
@@ -95,7 +98,7 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
               {isRemote ? "F3: REMOTE" : "F3: LOCAL"}
             </span>
             <h3 className="font-mono text-xs font-semibold text-slate-200 truncate" title={filePath}>
-              {fileName} ({lines.length} lines)
+              {fileName}{isText ? ` (${lines.length} lines)` : ` (${category})`}
             </h3>
           </div>
           <button 
@@ -106,7 +109,8 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
           </button>
         </div>
 
-        {/* Action/Search Bar */}
+        {/* Action/Search Bar (text only) */}
+        {isText && (
         <div className="bg-slate-850 p-2 border-b border-slate-800 flex flex-wrap gap-2 items-center justify-between shrink-0">
           <form onSubmit={handleSearch} className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden w-full max-w-md">
             <input
@@ -143,9 +147,11 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
             </div>
           )}
         </div>
+        )}
 
         {/* Content Box */}
-        <div 
+        {isText ? (
+        <div
           ref={textRef}
           className="flex-1 overflow-y-auto bg-slate-950 p-4 font-mono text-[12px] leading-relaxed text-slate-300 select-all"
         >
@@ -159,7 +165,7 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
                   <div key={i}>{i + 1}</div>
                 ))}
               </div>
-              
+
               {/* Actual Lines */}
               <pre className="overflow-x-auto whitespace-pre tab-size-4 flex-1">
                 {lines.map((line, i) => {
@@ -173,6 +179,22 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
             </div>
           )}
         </div>
+        ) : (
+        <div className="flex-1 overflow-auto bg-slate-950 flex items-center justify-center p-4">
+          {category === 'image' && (
+            <img src={rawUrl} alt={fileName} className="max-w-full max-h-full object-contain" />
+          )}
+          {category === 'pdf' && (
+            <iframe src={rawUrl} title={fileName} className="w-full h-full min-h-[70vh] border-0 bg-white" />
+          )}
+          {category === 'video' && (
+            <video src={rawUrl} controls className="max-w-full max-h-full" />
+          )}
+          {category === 'audio' && (
+            <audio src={rawUrl} controls className="w-full" />
+          )}
+        </div>
+        )}
 
         {/* Footer info banner */}
         <div className="bg-slate-950 border-t border-slate-850 p-2 text-[10px] text-slate-500 flex justify-between font-mono shrink-0">
