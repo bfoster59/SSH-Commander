@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { X, Save, FileEdit } from "lucide-react";
+import Editor from "react-simple-code-editor";
+import { highlightCode } from "../lib/highlight";
 
 interface FileEditorProps {
   isOpen: boolean;
@@ -55,14 +57,7 @@ export default function FileEditor({ isOpen, onClose, fileName, filePath, initia
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setContent(e.target.value);
-    setIsDirty(true);
-  };
-
   if (!isOpen) return null;
-
-  const lines = content.split("\n");
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4" id="editor-root">
@@ -121,24 +116,22 @@ export default function FileEditor({ isOpen, onClose, fileName, filePath, initia
           </div>
         </div>
 
-        {/* Text Area */}
-        <div className="flex-1 flex overflow-hidden bg-slate-950 font-mono text-[12px] leading-relaxed p-4">
-          <div className="relative flex-1 flex">
-            {/* Mock Line numbers */}
-            <div className="text-right text-slate-650 select-none pr-4 border-r border-slate-850 mr-4 shrink-0 font-medium">
-              {Array.from({ length: Math.max(lines.length, 1) }).map((_, i) => (
-                <div key={i}>{i + 1}</div>
-              ))}
-            </div>
-
-            {/* Standard Text Area */}
-            <textarea
-              value={content}
-              onChange={handleChange}
-              spellCheck={false}
-              className="flex-1 bg-transparent text-slate-350 focus:outline-none resize-none font-mono block overflow-y-auto min-h-full leading-relaxed border-0 p-0 focus:ring-0 whitespace-pre"
-            />
-          </div>
+        {/* Highlighted editor */}
+        <div className="flex-1 overflow-auto bg-slate-950 p-4">
+          <Editor
+            value={content}
+            onValueChange={(code) => { setContent(code); setIsDirty(true); }}
+            highlight={(code) => highlightCode(code, fileName)}
+            padding={0}
+            spellCheck={false}
+            className="hljs !bg-transparent min-h-full"
+            textareaClassName="focus:outline-none"
+            style={{
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace',
+              fontSize: 12,
+              lineHeight: "1.5rem",
+            }}
+          />
         </div>
 
         {/* Path Label */}

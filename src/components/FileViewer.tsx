@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { X, Search, ChevronDown, ChevronUp } from "lucide-react";
+import { highlightCode } from "../lib/highlight";
 
 interface FileViewerProps {
   isOpen: boolean;
@@ -82,6 +83,11 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
     scrollToMatch(matchIndexes[prevIdx]);
   };
 
+  const highlighted = useMemo(
+    () => (category === 'text' && content ? highlightCode(content, fileName) : ""),
+    [category, content, fileName]
+  );
+
   if (!isOpen) return null;
 
   const isText = category === 'text';
@@ -160,21 +166,15 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
           ) : (
             <div className="flex">
               {/* Line numbers Column */}
-              <div className="text-right text-slate-650 select-none pr-4 border-r border-slate-850 mr-4 shrink-0 font-medium">
+              <div className="text-right text-slate-650 select-none pr-4 border-r border-slate-850 mr-4 shrink-0 font-medium leading-[1.5rem]">
                 {lines.map((_, i) => (
                   <div key={i}>{i + 1}</div>
                 ))}
               </div>
 
-              {/* Actual Lines */}
-              <pre className="overflow-x-auto whitespace-pre tab-size-4 flex-1">
-                {lines.map((line, i) => {
-                  return (
-                    <div key={i} className="min-h-[1.5rem] hover:bg-slate-900/40 rounded px-1">
-                      {line}
-                    </div>
-                  );
-                })}
+              {/* Highlighted code */}
+              <pre className="hljs overflow-x-auto whitespace-pre tab-size-4 flex-1 leading-[1.5rem] !bg-transparent !p-0">
+                <code dangerouslySetInnerHTML={{ __html: highlighted }} />
               </pre>
             </div>
           )}
