@@ -60,38 +60,38 @@ export default function FileEditor({ isOpen, onClose, fileName, filePath, initia
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4" id="editor-root">
-      <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-lg shadow-2xl flex flex-col overflow-hidden max-h-[85vh]">
-        
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4" id="editor-root">
+      <div className="bg-[var(--color-panel)] border border-[var(--color-border)] w-full max-w-5xl rounded-lg shadow-2xl flex flex-col overflow-hidden max-h-[85vh]">
+
         {/* Header bar */}
-        <div className="bg-slate-950 border-b border-slate-800 p-3 flex justify-between items-center shrink-0">
+        <div className="bg-[var(--color-base)] border-b border-[var(--color-border)] p-3 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950 border border-amber-700 text-amber-200">
               {isRemote ? "F4: REMOTE" : "F4: LOCAL"}
             </span>
-            <h3 className="font-mono text-xs font-semibold text-slate-200 truncate flex items-center gap-1.5" title={filePath}>
+            <h3 className="font-mono text-xs font-semibold text-[var(--color-content)] truncate flex items-center gap-1.5" title={filePath}>
               <FileEdit className="w-3.5 h-3.5 text-amber-500" />
               {fileName} {isDirty && <span className="text-amber-400 font-sans text-[10px] font-bold">(Modified)</span>}
             </h3>
           </div>
-          <button 
+          <button
             onClick={onClose}
-            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"
+            className="p-1 hover:bg-[var(--color-hover)] rounded text-[var(--color-muted)] hover:text-[var(--color-content)] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Toolbar */}
-        <div className="bg-slate-850 p-2.5 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <div className="bg-[var(--color-surface)] p-2.5 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex gap-2">
             <button
               onClick={triggerSave}
               disabled={isSaving}
               className={`px-3.5 py-1 text-xs font-semibold rounded flex items-center gap-1.5 transition-all outline-none ${
-                isDirty 
-                  ? "bg-sky-600 hover:bg-sky-555 text-white cursor-pointer" 
-                  : "bg-slate-800 text-slate-400 cursor-not-allowed"
+                isDirty
+                  ? "bg-sky-600 hover:bg-sky-555 text-white cursor-pointer"
+                  : "bg-[var(--color-hover)] text-[var(--color-muted)] cursor-not-allowed"
               }`}
             >
               <Save className="w-3.5 h-3.5" />
@@ -110,13 +110,15 @@ export default function FileEditor({ isOpen, onClose, fileName, filePath, initia
                 ✕ Save Failed
               </span>
             )}
-            <span className="text-slate-500 bg-slate-950 px-2 py-0.5 border border-slate-800 rounded">
+            <span className="text-[var(--color-muted)] bg-[var(--color-base)] px-2 py-0.5 border border-[var(--color-border)] rounded">
               Ctrl+S / Save button
             </span>
           </div>
         </div>
 
-        {/* Highlighted editor */}
+        {/* Highlighted editor.
+            Fixed dark canvas in both themes: react-simple-code-editor renders the
+            atom-one-dark highlight.js palette, which is tuned for a dark background. */}
         <div className="flex-1 overflow-auto bg-slate-950 p-4">
           <Editor
             value={content}
@@ -135,7 +137,7 @@ export default function FileEditor({ isOpen, onClose, fileName, filePath, initia
         </div>
 
         {/* Path Label */}
-        <div className="bg-slate-950 border-t border-slate-850 p-2 text-[10px] text-slate-500 flex justify-between font-mono shrink-0">
+        <div className="bg-[var(--color-base)] border-t border-[var(--color-border)] p-2 text-[10px] text-[var(--color-muted)] flex justify-between font-mono shrink-0">
           <span>Path: {filePath}</span>
           <span>Press Esc or Save to apply modifications</span>
         </div>
