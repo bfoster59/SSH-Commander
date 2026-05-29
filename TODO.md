@@ -29,6 +29,15 @@ hardened, tested, and CI-green on `main`. Roughly priority-ordered within groups
       containerized SSH server) so remote behavior is covered automatically, not
       just manually as this session did.
 
+## Dependency major upgrades (deliberate migrations)
+Dependabot now proposes each of these as its own PR. They need real migration work,
+not a merge-and-go — tackle one at a time and run the full gate.
+- [ ] **Vite 6 → 8** — may require bumping `@vitejs/plugin-react` / `@tailwindcss/vite`;
+      verify `npm run dev` and `npm run build`.
+- [ ] **`@types/node` 22 → 25** — Node stream/exec callbacks in `server.ts` (`code`,
+      `chunk`) go implicit-`any`; add explicit param types.
+- [ ] **esbuild 0.25 → 0.28** — verify the server bundle (`npm run build`).
+
 ## Features (optional / if scope grows)
 - [ ] Optional **auth layer** (token) — required before any non-loopback exposure;
       today there is no auth and the server binds loopback by default.
