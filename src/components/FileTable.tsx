@@ -154,7 +154,7 @@ export default function FileTable({
   const handleRowClick = (index: number, event: React.MouseEvent) => {
     onFocus();
 
-    let newSelectedIndices = [...selectedIndices];
+    let newSelectedIndices: number[];
 
     if (index === 0) {
       newSelectedIndices = [0];
@@ -340,7 +340,7 @@ export default function FileTable({
               type="text"
               value={draftPath}
               onChange={e => setDraftPath(e.target.value)}
-              className="flex-1 bg-[var(--color-panel)] text-xs px-2 py-0.5 rounded border border-[var(--color-border)] focus:outline-none focus:border-[#339AF0] font-mono text-white"
+              className="flex-1 bg-[var(--color-panel)] text-xs px-2 py-0.5 rounded border border-[var(--color-border)] focus:outline-none focus:border-[#339AF0] font-mono text-[var(--color-content)]"
               autoFocus
               onBlur={() => setTimeout(() => setIsEditingPath(false), 200)}
             />
