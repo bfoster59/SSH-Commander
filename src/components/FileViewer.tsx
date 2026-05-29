@@ -94,22 +94,22 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
   const lines = content.split("\n");
 
   return (
-    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4" id="viewer-root">
-      <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-lg shadow-2xl flex flex-col overflow-hidden max-h-[85vh]">
-        
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4" id="viewer-root">
+      <div className="bg-[var(--color-panel)] border border-[var(--color-border)] w-full max-w-5xl rounded-lg shadow-2xl flex flex-col overflow-hidden max-h-[85vh]">
+
         {/* Title bar */}
-        <div className="bg-slate-950 border-b border-slate-800 p-3 flex justify-between items-center shrink-0">
+        <div className="bg-[var(--color-base)] border-b border-[var(--color-border)] p-3 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[10px] px-2 py-0.5 rounded bg-sky-900 border border-sky-700 text-sky-200">
               {isRemote ? "F3: REMOTE" : "F3: LOCAL"}
             </span>
-            <h3 className="font-mono text-xs font-semibold text-slate-200 truncate" title={filePath}>
+            <h3 className="font-mono text-xs font-semibold text-[var(--color-content)] truncate" title={filePath}>
               {fileName}{isText ? ` (${lines.length} lines)` : ` (${category})`}
             </h3>
           </div>
-          <button 
+          <button
             onClick={onClose}
-            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"
+            className="p-1 hover:bg-[var(--color-hover)] rounded text-[var(--color-muted)] hover:text-[var(--color-content)] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -117,35 +117,35 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
 
         {/* Action/Search Bar (text only) */}
         {isText && (
-        <div className="bg-slate-850 p-2 border-b border-slate-800 flex flex-wrap gap-2 items-center justify-between shrink-0">
-          <form onSubmit={handleSearch} className="flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden w-full max-w-md">
+        <div className="bg-[var(--color-surface)] p-2 border-b border-[var(--color-border)] flex flex-wrap gap-2 items-center justify-between shrink-0">
+          <form onSubmit={handleSearch} className="flex items-center bg-[var(--color-base)] border border-[var(--color-border)] rounded overflow-hidden w-full max-w-md">
             <input
               type="text"
               placeholder="Find text..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="px-2.5 py-1 text-xs text-white bg-transparent focus:outline-none w-full"
+              className="px-2.5 py-1 text-xs text-[var(--color-content)] bg-transparent focus:outline-none w-full"
             />
-            <button type="submit" className="p-1.5 text-slate-400 hover:text-white">
+            <button type="submit" className="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-content)]">
               <Search className="w-3.5 h-3.5" />
             </button>
           </form>
 
           {matchIndexes.length > 0 && (
-            <div className="flex items-center gap-3 text-xs text-slate-350">
-              <span className="font-mono bg-slate-800 px-2 py-0.5 rounded text-sky-400">
+            <div className="flex items-center gap-3 text-xs text-[var(--color-muted)]">
+              <span className="font-mono bg-[var(--color-hover)] px-2 py-0.5 rounded text-sky-400">
                 Match {currentMatchIndex + 1} of {matchIndexes.length}
               </span>
               <div className="flex gap-1">
-                <button 
+                <button
                   onClick={handlePrevMatch}
-                  className="p-1 bg-slate-800 hover:bg-slate-750 text-white rounded transition-colors"
+                  className="p-1 bg-[var(--color-hover)] hover:bg-[var(--color-elevated)] text-[var(--color-content)] rounded transition-colors"
                 >
                   <ChevronUp className="w-3.5 h-3.5" />
                 </button>
-                <button 
+                <button
                   onClick={handleNextMatch}
-                  className="p-1 bg-slate-800 hover:bg-slate-750 text-white rounded transition-colors"
+                  className="p-1 bg-[var(--color-hover)] hover:bg-[var(--color-elevated)] text-[var(--color-content)] rounded transition-colors"
                 >
                   <ChevronDown className="w-3.5 h-3.5" />
                 </button>
@@ -155,7 +155,10 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
         </div>
         )}
 
-        {/* Content Box */}
+        {/* Content Box.
+            The code/media canvas stays on a fixed dark surface in both themes:
+            the atom-one-dark highlight.js palette is tuned for a dark background,
+            so theming this surface light would make highlighted code low-contrast. */}
         {isText ? (
         <div
           ref={textRef}
@@ -197,7 +200,7 @@ export default function FileViewer({ isOpen, onClose, fileName, filePath, conten
         )}
 
         {/* Footer info banner */}
-        <div className="bg-slate-950 border-t border-slate-850 p-2 text-[10px] text-slate-500 flex justify-between font-mono shrink-0">
+        <div className="bg-[var(--color-base)] border-t border-[var(--color-border)] p-2 text-[10px] text-[var(--color-muted)] flex justify-between font-mono shrink-0">
           <span>Path: {filePath}</span>
           <span>Press ESC or Close to return</span>
         </div>
