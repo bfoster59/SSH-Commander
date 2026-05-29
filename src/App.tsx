@@ -12,6 +12,10 @@ import FileViewer from "./components/FileViewer";
 import FileEditor from "./components/FileEditor";
 import TerminalModal from "./components/TerminalModal";
 import { usePaneSide, PaneTab } from "./hooks/useFilePane";
+import { useDialogs } from "./components/Dialogs";
+import { apiPost } from "./lib/api";
+import { joinPath, parentPath, baseName } from "./lib/paths";
+import { classifyFile } from "./lib/classify";
 import {
   Search,
   Loader2,
@@ -23,6 +27,9 @@ import {
 } from "lucide-react";
 
 export default function App() {
+  // Promise-based dialogs/toasts (replaces window.alert/confirm/prompt).
+  const { confirm, prompt, toast, dialogElements } = useDialogs();
+
   // Session timer ticker
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -222,39 +229,21 @@ export default function App() {
     const effectiveConnId = override?.connectionId ?? paneState.connectionId;
     try {
       if (effectiveType === 'local') {
-        const res = await fetch('/api/local/list', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: targetPath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed directory navigation');
-        }
-        const data = await res.json();
+        const data = await apiPost('/api/local/list', { path: targetPath });
         paneState.setPath(data.path);
         paneState.setFiles(data.files);
         paneState.setSelectedIndex(0);
         paneState.setSelectedIndices([0]);
       } else {
-        if (!effectiveConnId) throw new Error("Remote connection expired. Please connect index.");
-        const res = await fetch('/api/ssh/list', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: effectiveConnId, path: targetPath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed scanning SSH directory list');
-        }
-        const data = await res.json();
+        if (!effectiveConnId) throw new Error("Remote connection expired. Please reconnect.");
+        const data = await apiPost('/api/ssh/list', { connectionId: effectiveConnId, path: targetPath });
         paneState.setPath(targetPath);
         paneState.setFiles(data.files);
         paneState.setSelectedIndex(0);
         paneState.setSelectedIndices([0]);
       }
     } catch (err: any) {
-      alert(`Directory index load state error: ${err.message}`);
+      toast(`Directory load error: ${err.message}`);
     }
   };
 
@@ -280,18 +269,7 @@ export default function App() {
     const paneState = activePane === 'left' ? leftPane : rightPane;
 
     try {
-      const res = await fetch('/api/ssh/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile })
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Establish SSH link failure");
-      }
-
-      const data = await res.json();
+      const data = await apiPost('/api/ssh/connect', { profile });
       paneState.setType('remote');
       paneState.setConnectionId(data.connectionId);
       paneState.setConnectionName(profile.name);
@@ -301,31 +279,14 @@ export default function App() {
         connectionId: data.connectionId
       });
     } catch (err: any) {
-      alert(`SSH Connection link error: ${err.message}`);
+      toast(`SSH connection error: ${err.message}`);
     }
   };
 
   // Keyboard navigation & global shortcuts hooks
   const triggerGoUp = (pane: 'left' | 'right') => {
     const currentPath = pane === 'left' ? leftPath : rightPath;
-    const isWindows = !currentPath.startsWith("/");
-    if (isWindows) {
-      const parts = currentPath.split("\\").filter(Boolean);
-      if (parts.length > 1) {
-        parts.pop();
-        handleNavigate(pane, parts.join("\\"));
-      } else if (parts.length === 1) {
-        handleNavigate(pane, parts[0] + "\\");
-      }
-    } else {
-      const parts = currentPath.split("/").filter(Boolean);
-      if (parts.length > 1) {
-        parts.pop();
-        handleNavigate(pane, "/" + parts.join("/"));
-      } else {
-        handleNavigate(pane, "/");
-      }
-    }
+    handleNavigate(pane, parentPath(currentPath));
   };
 
   const triggerOpenSelected = (pane: 'left' | 'right') => {
@@ -341,8 +302,7 @@ export default function App() {
     if (!selectedFile) return;
 
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const separator = basePath.includes("/") ? "/" : "\\";
-    const fullSourcePath = basePath.endsWith(separator) ? basePath + selectedFile.name : basePath + separator + selectedFile.name;
+    const fullSourcePath = joinPath(basePath, selectedFile.name);
 
     if (selectedFile.isDirectory) {
       handleNavigate(pane, fullSourcePath);
@@ -355,15 +315,6 @@ export default function App() {
         pane === 'left' ? leftConnectionId : rightConnectionId
       );
     }
-  };
-
-  const classifyFile = (name: string): 'text' | 'image' | 'pdf' | 'video' | 'audio' => {
-    const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
-    if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif'].includes(ext)) return 'image';
-    if (ext === '.pdf') return 'pdf';
-    if (['.mp4', '.webm', '.mov'].includes(ext)) return 'video';
-    if (['.mp3', '.wav', '.ogg'].includes(ext)) return 'audio';
-    return 'text';
   };
 
   const handleF3ViewForFile = async (name: string, filePath: string, isRemote: boolean, connId?: string) => {
@@ -387,32 +338,10 @@ export default function App() {
     }
 
     try {
-      let content = "";
-      if (isRemote) {
-        const res = await fetch('/api/ssh/read', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: connId, path: filePath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed reading remote text file');
-        }
-        const data = await res.json();
-        content = data.content;
-      } else {
-        const res = await fetch('/api/local/read', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: filePath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed reading local text file');
-        }
-        const data = await res.json();
-        content = data.content;
-      }
+      const data = isRemote
+        ? await apiPost('/api/ssh/read', { connectionId: connId, path: filePath })
+        : await apiPost('/api/local/read', { path: filePath });
+      const content = data.content;
 
       setViewerCategory('text');
       setViewerRawUrl("");
@@ -422,26 +351,23 @@ export default function App() {
       setViewerIsRemote(isRemote);
       setViewerOpen(true);
     } catch (err: any) {
-      alert(`View trigger error: ${err.message}`);
+      toast(`View error: ${err.message}`);
     }
   };
 
-  const handleCrossPaneDrop = (srcPane: 'left' | 'right', dstPane: 'left' | 'right') => {
+  const handleCrossPaneDrop = async (srcPane: 'left' | 'right', dstPane: 'left' | 'right') => {
     if (srcPane === dstPane) return;
     const selectedEntries = getSelectedEntries(srcPane);
     if (selectedEntries.length === 0) return;
 
     const srcPath = srcPane === 'left' ? leftPath : rightPath;
     const dstPath = dstPane === 'left' ? leftPath : rightPath;
-    const separator = srcPath.includes('/') ? '/' : '\\';
-    const fullSourcePaths = selectedEntries.map(f =>
-      srcPath.endsWith(separator) ? srcPath + f.name : srcPath + separator + f.name
-    );
+    const fullSourcePaths = selectedEntries.map(f => joinPath(srcPath, f.name));
 
     const label = selectedEntries.length === 1
       ? `Copy "${selectedEntries[0].name}" into "${dstPath}"?`
       : `Copy ${selectedEntries.length} items into "${dstPath}"?`;
-    if (!window.confirm(label)) return;
+    if (!(await confirm(label))) return;
 
     triggerTransferJob(srcPane, dstPane, fullSourcePaths);
   };
@@ -449,7 +375,7 @@ export default function App() {
   const handleCompress = async (pane: 'left' | 'right') => {
     const selectedEntries = getSelectedEntries(pane);
     if (selectedEntries.length === 0) {
-      alert("Select one or more items to compress.");
+      toast("Select one or more items to compress.");
       return;
     }
     const basePath = pane === 'left' ? leftPath : rightPath;
@@ -457,10 +383,7 @@ export default function App() {
     const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
     const suggested = selectedEntries.length === 1 ? `${selectedEntries[0].name}.zip` : "archive.zip";
-    const archiveName = window.prompt(
-      "Archive name (use .zip or .tar.gz):",
-      suggested
-    );
+    const archiveName = await prompt("Archive name (use .zip or .tar.gz):", suggested);
     if (!archiveName) return;
     const format: 'zip' | 'targz' = /\.(tar\.gz|tgz)$/i.test(archiveName) ? 'targz' : 'zip';
     const finalName = format === 'zip' && !/\.zip$/i.test(archiveName) ? `${archiveName}.zip` : archiveName;
@@ -471,18 +394,10 @@ export default function App() {
       const body = isRemote
         ? { connectionId: connId, basePath, entries: names, archiveName: finalName, format }
         : { basePath, entries: names, archiveName: finalName, format };
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Compression failed');
-      }
+      await apiPost(url, body);
       triggerRefresh(pane);
     } catch (err: any) {
-      alert(`Compress failed: ${err.message}`);
+      toast(`Compress failed: ${err.message}`);
     }
   };
 
@@ -490,31 +405,21 @@ export default function App() {
     const basePath = pane === 'left' ? leftPath : rightPath;
     const isRemote = (pane === 'left' ? leftType : rightType) === 'remote';
     const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
-    const separator = basePath.includes('/') ? '/' : '\\';
-    const archivePath = basePath.endsWith(separator) ? basePath + entry.name : basePath + separator + entry.name;
+    const archivePath = joinPath(basePath, entry.name);
 
     try {
       const url = isRemote ? '/api/ssh/extract' : '/api/local/extract';
       const body = isRemote ? { connectionId: connId, archivePath } : { archivePath };
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Extraction failed');
-      }
+      await apiPost(url, body);
       triggerRefresh(pane);
     } catch (err: any) {
-      alert(`Extract failed: ${err.message}`);
+      toast(`Extract failed: ${err.message}`);
     }
   };
 
   const handleOpenFileFromTable = (pane: 'left' | 'right', entry: FileEntry) => {
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const separator = basePath.includes("/") ? "/" : "\\";
-    const fullPath = basePath.endsWith(separator) ? basePath + entry.name : basePath + separator + entry.name;
+    const fullPath = joinPath(basePath, entry.name);
     handleF3ViewForFile(
       entry.name,
       fullPath,
@@ -534,8 +439,7 @@ export default function App() {
     if (!selectedFile || selectedFile.isDirectory) return;
 
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const separator = basePath.includes("/") ? "/" : "\\";
-    const fullSourcePath = basePath.endsWith(separator) ? basePath + selectedFile.name : basePath + separator + selectedFile.name;
+    const fullSourcePath = joinPath(basePath, selectedFile.name);
 
     handleF3ViewForFile(
       selectedFile.name,
@@ -555,47 +459,23 @@ export default function App() {
     if (!selectedFile || selectedFile.isDirectory) return;
 
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const separator = basePath.includes("/") ? "/" : "\\";
-    const fullSourcePath = basePath.endsWith(separator) ? basePath + selectedFile.name : basePath + separator + selectedFile.name;
+    const fullSourcePath = joinPath(basePath, selectedFile.name);
 
     try {
       const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
       const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
-      let content = "";
-      if (isRemote) {
-        const res = await fetch('/api/ssh/read', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: connId, path: fullSourcePath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed downloading file for editing');
-        }
-        const data = await res.json();
-        content = data.content;
-      } else {
-        const res = await fetch('/api/local/read', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: fullSourcePath })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed reading file for editing');
-        }
-        const data = await res.json();
-        content = data.content;
-      }
+      const data = isRemote
+        ? await apiPost('/api/ssh/read', { connectionId: connId, path: fullSourcePath })
+        : await apiPost('/api/local/read', { path: fullSourcePath });
 
       setEditorFileName(selectedFile.name);
       setEditorFilePath(fullSourcePath);
-      setEditorContent(content);
+      setEditorContent(data.content);
       setEditorIsRemote(isRemote);
       setEditorOpen(true);
     } catch (err: any) {
-      alert(`Editor setup error: ${err.message}`);
+      toast(`Editor open error: ${err.message}`);
     }
   };
 
@@ -620,30 +500,24 @@ export default function App() {
     return [];
   };
 
-  const triggerF5Copy = () => {
+  const triggerF5Copy = async () => {
     const srcPane = activePane;
     const dstPane = activePane === 'left' ? 'right' : 'left';
 
     const selectedEntries = getSelectedEntries(srcPane);
     if (selectedEntries.length === 0) {
-      alert("Please select files/directories to copy instead of the parent root link");
+      toast("Select one or more items to copy.");
       return;
     }
 
     const srcPath = srcPane === 'left' ? leftPath : rightPath;
     const dstPath = dstPane === 'left' ? leftPath : rightPath;
-    const separator = srcPath.includes("/") ? "/" : "\\";
+    const fullSourcePaths = selectedEntries.map(file => joinPath(srcPath, file.name));
 
-    const fullSourcePaths = selectedEntries.map(file => {
-      return srcPath.endsWith(separator) ? srcPath + file.name : srcPath + separator + file.name;
-    });
-
-    const displayMsg = selectedEntries.length === 1 
-      ? `COPY ACTION: Copy "${selectedEntries[0].name}" recursively into directory "${dstPath}"?`
-      : `COPY ACTION: Copy ${selectedEntries.length} items recursively into directory "${dstPath}"?`;
-
-    const isConfirmed = window.confirm(displayMsg);
-    if (!isConfirmed) return;
+    const displayMsg = selectedEntries.length === 1
+      ? `Copy "${selectedEntries[0].name}" recursively into "${dstPath}"?`
+      : `Copy ${selectedEntries.length} items recursively into "${dstPath}"?`;
+    if (!(await confirm(displayMsg))) return;
 
     triggerTransferJob(srcPane, dstPane, fullSourcePaths);
   };
@@ -651,7 +525,8 @@ export default function App() {
   const triggerTransferJob = async (
     srcPane: 'left' | 'right',
     dstPane: 'left' | 'right',
-    fullSourcePaths: string[] | string
+    fullSourcePaths: string[] | string,
+    move: boolean = false
   ) => {
     const srcType = srcPane === 'left' ? leftType : rightType;
     const dstType = dstPane === 'left' ? leftType : rightType;
@@ -673,25 +548,11 @@ export default function App() {
     }
 
     try {
-      const res = await fetch('/api/transfer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source: sourcePayload,
-          target: {
-            type: dstType,
-            path: targetFolder,
-            connectionId: dstConnId
-          }
-        })
+      const data = await apiPost('/api/transfer', {
+        source: sourcePayload,
+        target: { type: dstType, path: targetFolder, connectionId: dstConnId },
+        move
       });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to initialize background pipeline transfer details');
-      }
-
-      const data = await res.json();
       setCurrentJobId(data.jobId);
       setJobProgress({
         active: true,
@@ -702,7 +563,7 @@ export default function App() {
         totalBytes: 0
       });
     } catch (err: any) {
-      alert(err.message);
+      toast(err.message);
     }
   };
 
@@ -719,101 +580,72 @@ export default function App() {
     }
   };
 
+  const renameOne = (isRemote: boolean, connId: string | undefined, oldPath: string, newPath: string) =>
+    apiPost(isRemote ? '/api/ssh/rename' : '/api/local/rename',
+      isRemote ? { connectionId: connId, oldPath, newPath } : { oldPath, newPath });
+
   const triggerF6Move = async () => {
     const pane = activePane;
     const selectedEntries = getSelectedEntries(pane);
     if (selectedEntries.length === 0) {
-      alert("Please select files/directories to move/rename");
+      toast("Select one or more items to move/rename.");
       return;
     }
 
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const separator = basePath.includes("/") ? "/" : "\\";
     const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
     const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
     if (selectedEntries.length === 1) {
       const selectedFile = selectedEntries[0];
-      const oldFullPath = basePath.endsWith(separator) ? basePath + selectedFile.name : basePath + separator + selectedFile.name;
+      const oldFullPath = joinPath(basePath, selectedFile.name);
 
-      const responseName = window.prompt(`Rename / Move selection: Enter new relative name or absolute path for "${selectedFile.name}"`, selectedFile.name);
+      const responseName = await prompt(
+        `Rename / move "${selectedFile.name}" — enter a new name or absolute path:`,
+        selectedFile.name
+      );
       if (!responseName) return;
 
-      let targetPath = "";
-      if (responseName.includes("/") || responseName.includes("\\")) {
-        targetPath = responseName;
-      } else {
-        targetPath = basePath.endsWith(separator) ? basePath + responseName : basePath + separator + responseName;
-      }
+      const targetPath = (responseName.includes("/") || responseName.includes("\\"))
+        ? responseName
+        : joinPath(basePath, responseName);
 
       try {
-        if (isRemote) {
-          const res = await fetch('/api/ssh/rename', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connectionId: connId, oldPath: oldFullPath, newPath: targetPath })
-          });
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Failed remote SFTP renaming transaction');
-          }
-        } else {
-          const res = await fetch('/api/local/rename', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ oldPath: oldFullPath, newPath: targetPath })
-          });
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || 'Failed local volume rename system call');
-          }
-        }
-
+        await renameOne(isRemote, connId, oldFullPath, targetPath);
         triggerRefresh(pane);
         triggerRefresh(pane === 'left' ? 'right' : 'left');
       } catch (err: any) {
-        alert(`F6 Move error: ${err.message}`);
+        toast(`Move/rename failed: ${err.message}`);
       }
     } else {
       const dstPane = pane === 'left' ? 'right' : 'left';
       const dstPath = dstPane === 'left' ? leftPath : rightPath;
-      const dstSeparator = dstPath.includes("/") ? "/" : "\\";
+      const dstType = dstPane === 'left' ? leftType : rightType;
+      const dstConnId = dstPane === 'left' ? leftConnectionId : rightConnectionId;
 
-      const isConfirmed = window.confirm(`MOVE ACTION: Move ${selectedEntries.length} items to "${dstPath}"?`);
-      if (!isConfirmed) return;
+      if (!(await confirm(`Move ${selectedEntries.length} items to "${dstPath}"?`))) return;
+
+      // Same filesystem (both local, or the same SSH connection) => fast atomic
+      // rename. Crossing filesystems (local<->remote, or two different hosts) =>
+      // copy via the background transfer pipeline, which then removes the
+      // sources (true move semantics). rename cannot cross filesystems.
+      const srcType = isRemote ? 'remote' : 'local';
+      const sameFs = srcType === dstType && (srcType === 'local' || connId === dstConnId);
+
+      if (!sameFs) {
+        const fullSourcePaths = selectedEntries.map(file => joinPath(basePath, file.name));
+        triggerTransferJob(pane, dstPane, fullSourcePaths, true);
+        return;
+      }
 
       try {
         for (const file of selectedEntries) {
-          const oldFullPath = basePath.endsWith(separator) ? basePath + file.name : basePath + separator + file.name;
-          const targetPath = dstPath.endsWith(dstSeparator) ? dstPath + file.name : dstPath + dstSeparator + file.name;
-
-          if (isRemote) {
-            const res = await fetch('/api/ssh/rename', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ connectionId: connId, oldPath: oldFullPath, newPath: targetPath })
-            });
-            if (!res.ok) {
-              const err = await res.json();
-              throw new Error(err.error || `Failed to move remote item "${file.name}"`);
-            }
-          } else {
-            const res = await fetch('/api/local/rename', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ oldPath: oldFullPath, newPath: targetPath })
-            });
-            if (!res.ok) {
-              const err = await res.json();
-              throw new Error(err.error || `Failed to move local item "${file.name}"`);
-            }
-          }
+          await renameOne(isRemote, connId, joinPath(basePath, file.name), joinPath(dstPath, file.name));
         }
-
         triggerRefresh('left');
         triggerRefresh('right');
       } catch (err: any) {
-        alert(`Bulk F6 Move error: ${err.message}`);
+        toast(`Move failed: ${err.message}`);
         triggerRefresh('left');
         triggerRefresh('right');
       }
@@ -823,43 +655,20 @@ export default function App() {
   const triggerF7NewFolder = async () => {
     const pane = activePane;
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const type = pane === 'left' ? leftType : rightType;
 
-    const name = window.prompt("Mkdir: Enter new foldermap name to create inside the current directory:");
+    const name = await prompt("New folder name:");
     if (!name) return;
 
-    const separator = basePath.includes("/") ? "/" : "\\";
-    const resolved = basePath.endsWith(separator) ? basePath + name : basePath + separator + name;
+    const resolved = joinPath(basePath, name);
 
     try {
       const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
       const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
-
-      if (isRemote) {
-        const res = await fetch('/api/ssh/mkdir', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: connId, path: resolved })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed creating remote directory');
-        }
-      } else {
-        const res = await fetch('/api/local/mkdir', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: resolved })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed creating local folder');
-        }
-      }
-
+      await apiPost(isRemote ? '/api/ssh/mkdir' : '/api/local/mkdir',
+        isRemote ? { connectionId: connId, path: resolved } : { path: resolved });
       triggerRefresh(pane);
     } catch (err: any) {
-      alert(`Mkdir operation failure: ${err.message}`);
+      toast(`Create folder failed: ${err.message}`);
     }
   };
 
@@ -867,50 +676,28 @@ export default function App() {
     const pane = activePane;
     const selectedEntries = getSelectedEntries(pane);
     if (selectedEntries.length === 0) {
-      alert("Please select files/directories to delete");
+      toast("Select one or more items to delete.");
       return;
     }
 
-    const isConfirmed = selectedEntries.length === 1
-      ? window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting "${selectedEntries[0].name}"?`)
-      : window.confirm(`DELETE RECURSIVE: Are you absolutely confident about irrevocably deleting ${selectedEntries.length} selected items?`);
-    if (!isConfirmed) return;
+    const message = selectedEntries.length === 1
+      ? `Permanently delete "${selectedEntries[0].name}"? This cannot be undone.`
+      : `Permanently delete ${selectedEntries.length} selected items? This cannot be undone.`;
+    if (!(await confirm(message))) return;
 
     const basePath = pane === 'left' ? leftPath : rightPath;
-    const separator = basePath.includes("/") ? "/" : "\\";
     const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
     const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
     try {
       for (const file of selectedEntries) {
-        const resolvedPath = basePath.endsWith(separator) ? basePath + file.name : basePath + separator + file.name;
-
-        if (isRemote) {
-          const res = await fetch('/api/ssh/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connectionId: connId, path: resolvedPath })
-          });
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || `Failed to delete remote item "${file.name}"`);
-          }
-        } else {
-          const res = await fetch('/api/local/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: resolvedPath })
-          });
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || `Failed to delete local item "${file.name}"`);
-          }
-        }
+        const resolvedPath = joinPath(basePath, file.name);
+        await apiPost(isRemote ? '/api/ssh/delete' : '/api/local/delete',
+          isRemote ? { connectionId: connId, path: resolvedPath } : { path: resolvedPath });
       }
-
       triggerRefresh(pane);
     } catch (err: any) {
-      alert(`Removal transaction error: ${err.message}`);
+      toast(`Delete failed: ${err.message}`);
       triggerRefresh(pane);
     }
   };
@@ -920,20 +707,15 @@ export default function App() {
     const isRemote = pane === 'left' ? leftType === 'remote' : rightType === 'remote';
 
     if (!isRemote) {
-      alert("Active Pane is already connected locally. Exit is only valid to disconnect remote connections.");
+      toast("Active pane is local. Disconnect only applies to remote SSH connections.", "info");
       return;
     }
 
-    const isConfirmed = window.confirm("Are you sure you want to disconnect SSH on the active navigation panel?");
-    if (!isConfirmed) return;
+    if (!(await confirm("Disconnect the SSH session on the active pane?"))) return;
 
     const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
     try {
-      await fetch('/api/ssh/disconnect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionId: connId })
-      });
+      await apiPost('/api/ssh/disconnect', { connectionId: connId });
 
       if (pane === 'left') {
         setLeftType('local');
@@ -954,32 +736,13 @@ export default function App() {
   const handleEditorSave = async (filePath: string, content: string, isRemote: boolean) => {
     try {
       const connId = activePane === 'left' ? leftConnectionId : rightConnectionId;
-      if (isRemote) {
-        const res = await fetch('/api/ssh/write', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ connectionId: connId, path: filePath, content })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed uploading remote file edits');
-        }
-      } else {
-        const res = await fetch('/api/local/write', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: filePath, content })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Failed saving local file edits');
-        }
-      }
+      await apiPost(isRemote ? '/api/ssh/write' : '/api/local/write',
+        isRemote ? { connectionId: connId, path: filePath, content } : { path: filePath, content });
       triggerRefresh('left');
       triggerRefresh('right');
       return true;
     } catch (err: any) {
-      alert(`Failed to save edits: ${err.message}`);
+      toast(`Save failed: ${err.message}`);
       return false;
     }
   };
@@ -999,36 +762,14 @@ export default function App() {
     const connId = pane === 'left' ? leftConnectionId : rightConnectionId;
 
     try {
-      let results: any[] = [];
-      if (type === 'local') {
-        const res = await fetch('/api/local/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ basePath: path, query: searchQuery })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Recursive search failed on local subsystem');
-        }
-        const data = await res.json();
-        results = data.results || [];
-      } else {
-        const res = await fetch('/api/ssh/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ basePath: path, query: searchQuery, connectionId: connId })
-        });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Recursive search failed on remote SSH endpoint');
-        }
-        const data = await res.json();
-        results = data.results || [];
-      }
+      const data = type === 'local'
+        ? await apiPost('/api/local/search', { basePath: path, query: searchQuery })
+        : await apiPost('/api/ssh/search', { basePath: path, query: searchQuery, connectionId: connId });
+      const results = data.results || [];
 
       setSearchResults(results);
       if (results.length === 0) {
-        setSearchError("No matching structures identified under active query criteria.");
+        setSearchError("No matches found for the current query.");
       }
     } catch (err: any) {
       setSearchError(err.message);
@@ -1045,14 +786,9 @@ export default function App() {
     if (match.isDirectory) {
       await handleNavigate(pane, targetPath);
     } else {
-      // Navigate to file parent folder path
-      const separator = targetPath.includes("/") ? "/" : "\\";
-      const parts = targetPath.split(separator);
-      const fileName = parts.pop() || "";
-      const parentDir = parts.join(separator) || (targetPath.startsWith("/") ? "/" : "C:\\");
-
-      setPendingSelection({ pane, name: fileName });
-      await handleNavigate(pane, parentDir);
+      // Navigate to the file's parent folder and remember it for highlighting.
+      setPendingSelection({ pane, name: baseName(targetPath) });
+      await handleNavigate(pane, parentPath(targetPath));
     }
   };
 
@@ -1261,11 +997,7 @@ export default function App() {
   const handleCloseTab = (side: 'left' | 'right', tab: PaneTab) => {
     const pane = side === 'left' ? leftPane : rightPane;
     if (tab.type === 'remote' && tab.connectionId) {
-      fetch('/api/ssh/disconnect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connectionId: tab.connectionId })
-      }).catch(() => { /* best-effort */ });
+      apiPost('/api/ssh/disconnect', { connectionId: tab.connectionId }).catch(() => { /* best-effort */ });
     }
     pane.closeTab(tab.id);
   };
@@ -1406,7 +1138,7 @@ export default function App() {
           <div className="bg-[var(--color-panel)] border-t border-[var(--color-border)] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
             <span className="text-[#339AF0] font-bold shrink-0">CMD:</span>
             <span className="text-[var(--color-muted)] truncate max-w-[40%] shrink" title={leftPath}>{leftPath}</span>
-            <span className="text-white brightness-75 shrink-0">$</span>
+            <span className="text-[var(--color-content)] brightness-75 shrink-0">$</span>
             <input
               type="text"
               value={leftCmdInput}
@@ -1414,7 +1146,7 @@ export default function App() {
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRunCmd('left'); } }}
               onFocus={() => setActivePane('left')}
               placeholder="Type a command and press Enter (e.g. claude, ls, git status)"
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[var(--color-muted)] focus:ring-0"
+              className="flex-1 bg-transparent border-none outline-none text-[var(--color-content)] placeholder-[var(--color-muted)] focus:ring-0"
             />
           </div>
         </section>
@@ -1457,7 +1189,7 @@ export default function App() {
           <div className="bg-[var(--color-panel)] border-t border-[var(--color-border)] px-3 py-2 flex items-center gap-2 font-mono text-[11px]">
             <span className="text-[#339AF0] font-bold shrink-0">CMD:</span>
             <span className="text-[var(--color-muted)] truncate max-w-[40%] shrink" title={rightPath}>{rightPath}</span>
-            <span className="text-white brightness-75 shrink-0">$</span>
+            <span className="text-[var(--color-content)] brightness-75 shrink-0">$</span>
             <input
               type="text"
               value={rightCmdInput}
@@ -1465,7 +1197,7 @@ export default function App() {
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleRunCmd('right'); } }}
               onFocus={() => setActivePane('right')}
               placeholder="Type a command and press Enter (e.g. claude, ls, git status)"
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-[var(--color-muted)] focus:ring-0"
+              className="flex-1 bg-transparent border-none outline-none text-[var(--color-content)] placeholder-[var(--color-muted)] focus:ring-0"
             />
           </div>
         </section>
@@ -1659,6 +1391,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Promise-based confirm / prompt / toast host */}
+      {dialogElements}
 
     </div>
   );

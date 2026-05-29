@@ -75,18 +75,28 @@ Open **http://localhost:3000** in your browser.
 
 ```bash
 npm run build      # bundles the client (vite) and the server (esbuild)
-npm run start      # runs the bundled server from dist/
+npm run start      # runs the bundled server from dist/ (production mode)
+```
+
+## Quality checks
+
+```bash
+npm run typecheck  # tsc --noEmit
+npm run lint       # eslint
+npm test           # vitest unit tests (path/shell-quoting/classification logic)
 ```
 
 ## Configuration
 
-No environment variables are required. See [.env.example](.env.example):
+No environment variables are required. Optional ones (see [.env.example](.env.example)):
 
-| Variable      | Purpose                                                        |
-| ------------- | -------------------------------------------------------------- |
-| `DISABLE_HMR` | Set to `true` to turn off Vite hot-reload / file watching.     |
+| Variable      | Purpose                                                                          |
+| ------------- | -------------------------------------------------------------------------------- |
+| `HOST`        | Address to bind. Defaults to `127.0.0.1` (loopback). Set `0.0.0.0` to expose it. |
+| `DISABLE_HMR` | Set to `true` to turn off Vite hot-reload / file watching (dev only).            |
 
-The server listens on **port 3000**.
+The server listens on **port 3000**. Open it via `localhost` / `127.0.0.1` — while
+bound to loopback, requests with another `Host` header are rejected (see Security notes).
 
 ---
 
@@ -99,4 +109,12 @@ The server listens on **port 3000**.
 - Private keys are read from a path on the machine running SSH Commander; `~`
   expands to that machine's home directory.
 - SSH Commander exposes local-filesystem and shell access through the browser.
-  Run it on a trusted machine/network; it is not hardened for public exposure.
+  By default the server binds to **loopback (`127.0.0.1`) only**, so the API is
+  not reachable from the network. Set `HOST=0.0.0.0` to expose it deliberately —
+  but it ships with **no authentication**, so only do that behind your own auth
+  on a trusted network.
+- While bound to loopback, requests with an unexpected `Host` header are rejected
+  (DNS-rebinding mitigation), and the interactive-terminal WebSocket rejects
+  cross-site upgrade requests.
+- The text viewer/editor refuses files larger than 10 MB to avoid exhausting
+  server memory — transfer large or binary files rather than opening them.

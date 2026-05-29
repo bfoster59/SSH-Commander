@@ -193,7 +193,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
         {/* Right pane: Form configuration */}
         <div className="flex-1 p-5 lg:p-6 flex flex-col justify-between min-w-0 bg-[var(--color-surface)]">
           <div className="flex items-center justify-between pb-3 mb-4 border-b border-[var(--color-border)]">
-            <h3 className="font-semibold text-white text-md flex items-center gap-2">
+            <h3 className="font-semibold text-[var(--color-content)] text-md flex items-center gap-2">
               <Shield className="w-4 text-[#339AF0] h-4" />
               SSH / SFTP Server Configuration
             </h3>
@@ -217,7 +217,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="e.g., Target Production"
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-650 font-sans"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] placeholder-slate-650 font-sans"
                 />
               </div>
 
@@ -231,7 +231,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="ssh.example.com or 10.0.0.12"
                   value={host}
                   onChange={e => setHost(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-655 font-mono"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] placeholder-slate-655 font-mono"
                 />
               </div>
 
@@ -245,7 +245,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="22"
                   value={port}
                   onChange={e => setPort(Number(e.target.value))}
-                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] font-sans"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] font-sans"
                 />
               </div>
 
@@ -259,7 +259,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                   placeholder="root / ubuntu / admin"
                   value={username}
                   onChange={e => setUsername(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-slate-660 font-sans"
+                  className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] placeholder-slate-660 font-sans"
                 />
               </div>
             </div>
@@ -302,7 +302,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                     placeholder="SSH password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)]"
+                    className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)]"
                   />
                 </div>
               ) : (
@@ -316,7 +316,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                       placeholder="~/.ssh/id_ed25519"
                       value={privateKeyPath}
                       onChange={e => setPrivateKeyPath(e.target.value)}
-                      className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)] font-mono"
+                      className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)] font-mono"
                     />
                     <p className="text-[10px] text-[var(--color-muted)] mt-1">Path on the machine running SSH Commander. ~ expands to your home directory.</p>
                   </div>
@@ -330,7 +330,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                       placeholder="Passphrase if the key is encrypted"
                       value={passphrase}
                       onChange={e => setPassphrase(e.target.value)}
-                      className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-white focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)]"
+                      className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] placeholder-[var(--color-muted)]"
                     />
                   </div>
                 </div>

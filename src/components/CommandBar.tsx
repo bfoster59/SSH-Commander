@@ -1,5 +1,5 @@
 import { OperationProgress } from "../types";
-import { Play, Square, Loader2, Info } from "lucide-react";
+import { Square, Loader2, Info } from "lucide-react";
 
 interface CommandBarProps {
   onF3View: () => void;

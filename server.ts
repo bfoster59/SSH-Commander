@@ -9,11 +9,34 @@ import * as pty from "node-pty";
 import type { IncomingMessage } from "http";
 import AdmZip from "adm-zip";
 import * as tar from "tar";
+import { shq, archiveBaseName, mimeForPath, MAX_TEXT_READ_BYTES } from "./server-utils.js";
 
 const app = express();
 const PORT = 3000;
+// Bind to loopback by default so the local-filesystem + shell API is not
+// reachable from the network. Set HOST=0.0.0.0 to deliberately expose it
+// (only behind your own auth / on a trusted network).
+const HOST = process.env.HOST || "127.0.0.1";
 
 app.use(express.json({ limit: "50mb" }));
+
+// When bound to loopback, reject requests whose Host header isn't localhost.
+// This blocks DNS-rebinding (a malicious site resolving its domain to 127.0.0.1
+// and driving the local API from your browser). Skipped when the operator has
+// deliberately set HOST to something else (then their own network/auth applies).
+const enforceLoopbackHost = HOST === "127.0.0.1" || HOST === "localhost" || HOST === "::1";
+app.use((req, res, next) => {
+  if (!enforceLoopbackHost) return next();
+  const raw = (req.headers.host || "").toLowerCase();
+  const ok =
+    raw === "" ||
+    /^localhost(:\d+)?$/.test(raw) ||
+    /^127\.0\.0\.1(:\d+)?$/.test(raw) ||
+    /^\[::1\](:\d+)?$/.test(raw) ||
+    /^::1(:\d+)?$/.test(raw);
+  if (ok) return next();
+  res.status(403).json({ error: "Forbidden: unexpected Host header (possible DNS-rebinding attempt)." });
+});
 
 // Types
 import { FileEntry, ConnectionProfile, OperationProgress } from "./src/types.js";
@@ -176,6 +199,11 @@ app.post("/api/local/read", async (req, res) => {
     if (!stat.isFile()) {
       return res.status(400).json({ error: "Target is a directory, cannot read as file" });
     }
+    if (stat.size > MAX_TEXT_READ_BYTES) {
+      return res.status(413).json({
+        error: `File is too large to open as text (${Math.round(stat.size / 1048576)} MB; limit ${MAX_TEXT_READ_BYTES / 1048576} MB).`,
+      });
+    }
 
     // Support UTF-8 textual reading
     const content = await fs.promises.readFile(resolved, "utf-8");
@@ -301,10 +329,6 @@ app.post("/api/local/search", async (req, res) => {
 
 // ---- ARCHIVE: compress / extract (.zip and .tar.gz) ----
 
-function archiveBaseName(name: string): string {
-  return name.replace(/\.(zip|tar\.gz|tgz|gz)$/i, "");
-}
-
 app.post("/api/local/compress", async (req, res) => {
   try {
     const { basePath, entries, archiveName, format } = req.body as
@@ -352,11 +376,6 @@ app.post("/api/local/extract", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// Single-quote escape for POSIX remote shells.
-function shq(s: string): string {
-  return `'${String(s).replace(/'/g, "'\\''")}'`;
-}
 
 function runRemote(connectionId: string, cmd: string, res: express.Response) {
   let session;
@@ -429,20 +448,14 @@ app.post("/api/ssh/connect", (req, res) => {
         lastActive: Date.now(),
       });
 
-      // Fetch remote home directory path
-      sftp.readdir("~", (err, list) => {
-        if (err) {
-          // Fallback to root if home is not accessible
-          res.json({ connectionId: connId, homePath: "/" });
+      // Resolve the session's starting directory (the user's home on most
+      // servers). SFTP is not a shell, so "~" is often taken literally —
+      // realpath(".") is the canonical way to get the absolute home path.
+      sftp.realpath(".", (realPathErr, homePath) => {
+        if (realPathErr || !homePath) {
+          res.json({ connectionId: connId, homePath: "/" }); // Should be rare
         } else {
-          // Successfully probed home, now get its absolute path
-          sftp.realpath("~", (realPathErr, homePath) => {
-            if (realPathErr) {
-              res.json({ connectionId: connId, homePath: "/" }); // Should be rare
-            } else {
-              res.json({ connectionId: connId, homePath });
-            }
-          });
+          res.json({ connectionId: connId, homePath });
         }
       });
     });
@@ -546,11 +559,22 @@ app.post("/api/ssh/read", (req, res) => {
     const { connectionId, path: filePath } = req.body;
     const { sftp } = getSSHSession(connectionId);
 
-    sftp.readFile(filePath, "utf-8", (err, data) => {
-      if (err) {
-        return res.status(500).json({ error: `SFTP read failed: ${err.message}` });
+    // Probe size first so we don't pull a huge/binary file into the heap.
+    sftp.stat(filePath, (statErr, stats) => {
+      if (statErr) {
+        return res.status(500).json({ error: `SFTP read failed: ${statErr.message}` });
       }
-      res.json({ content: data });
+      if (stats.size > MAX_TEXT_READ_BYTES) {
+        return res.status(413).json({
+          error: `File is too large to open as text (${Math.round(stats.size / 1048576)} MB; limit ${MAX_TEXT_READ_BYTES / 1048576} MB).`,
+        });
+      }
+      sftp.readFile(filePath, "utf-8", (err, data) => {
+        if (err) {
+          return res.status(500).json({ error: `SFTP read failed: ${err.message}` });
+        }
+        res.json({ content: data });
+      });
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -559,21 +583,6 @@ app.post("/api/ssh/read", (req, res) => {
 
 // Raw byte streaming for binary previews (images, PDFs, etc.).
 // GET so it can be used directly as an <img>/<iframe> src.
-const MIME_BY_EXT: Record<string, string> = {
-  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-  ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
-  ".svg": "image/svg+xml", ".ico": "image/x-icon", ".avif": "image/avif",
-  ".pdf": "application/pdf",
-  ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
-  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
-  ".txt": "text/plain", ".json": "application/json",
-};
-
-function mimeForPath(p: string): string {
-  const ext = path.extname(p).toLowerCase();
-  return MIME_BY_EXT[ext] || "application/octet-stream";
-}
-
 app.get("/api/raw", (req, res) => {
   try {
     const type = String(req.query.type || "local");
@@ -644,7 +653,7 @@ app.post("/api/ssh/delete", (req, res) => {
     // To prevent tedious recursive files removal via multiple SFTP queries,
     // we fallback to executing rm -rf directly on ssh channel which is extremely solid and instantaneous.
     // If the server blocks shell commands or user prefers SFTP, we can try SFTP as safe backup.
-    client.exec(`rm -rf "${remotePath.replace(/"/g, '\\"')}"`, (err, stream) => {
+    client.exec(`rm -rf ${shq(remotePath)}`, (err, stream) => {
       if (err) {
         // Fallback to basic sftp deletion of a singular file
         sftp.unlink(remotePath, (unlinkErr) => {
@@ -720,13 +729,11 @@ app.post("/api/ssh/search", (req, res) => {
     }
     const { client, sftp } = getSSHSession(connectionId);
     
-    // Convert paths securely
     const targetPath = basePath || ".";
-    const escapedPath = targetPath.replace(/"/g, '\\"');
-    const escapedQuery = query.replace(/"/g, '\\"');
-    
-    // We try 'find' command if supported by target platform, else we fallback to scanning with SFTP
-    client.exec(`find "${escapedPath}" -name "*${escapedQuery}*" -printf "%p\\t%s\\t%y\\t%T@\\t%m\\n" 2>/dev/null`, (err, stream) => {
+
+    // We try 'find' command if supported by target platform, else we fallback to scanning with SFTP.
+    // Both args go through shq; the glob is built as a literal arg so `find -name` does the matching.
+    client.exec(`find ${shq(targetPath)} -name ${shq("*" + query + "*")} -printf "%p\\t%s\\t%y\\t%T@\\t%m\\n" 2>/dev/null`, (err, stream) => {
       if (err) {
         runSFTPSearch(sftp, targetPath, query, res);
       } else {
@@ -843,17 +850,18 @@ interface TransferEndpoint {
 app.post("/api/transfer", async (req, res) => {
   const source = req.body.source as TransferEndpoint;
   const target = req.body.target as TransferEndpoint;
+  const move = req.body.move === true;
 
   if (!source || !target) {
     return res.status(400).json({ error: "Missing source or target description" });
   }
 
   const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  
+
   // Set initial empty job progress
   activeTransferJobs.set(jobId, {
     active: true,
-    title: `Copying from ${source.type} to ${target.type}...`,
+    title: `${move ? "Moving" : "Copying"} from ${source.type} to ${target.type}...`,
     percentage: 0,
     currentItem: "Evaluating paths...",
     bytesTransferred: 0,
@@ -861,7 +869,7 @@ app.post("/api/transfer", async (req, res) => {
   });
 
   // Start background async transfer execution instantly without blocking HTTP response
-  executeBackgroundTransfer(jobId, source, target).catch((err) => {
+  executeBackgroundTransfer(jobId, source, target, move).catch((err) => {
     console.error(`Transfer background job ${jobId} failed completely:`, err);
     activeTransferJobs.set(jobId, {
       active: false,
@@ -894,8 +902,21 @@ app.post("/api/transfer/cancel/:jobId", (req, res) => {
 });
 
 
+// Best-effort recursive mkdir over SFTP. mkdir errors (e.g. "already exists")
+// are intentionally ignored so existing parent dirs don't abort a transfer.
+function sftpMkdirP(sftp: SFTPWrapper, dirPath: string): Promise<void> {
+  const parts = dirPath.split("/").filter(Boolean);
+  let current = dirPath.startsWith("/") ? "/" : "";
+  return (async () => {
+    for (const item of parts) {
+      current = path.join(current, item).replace(/\\/g, "/");
+      await new Promise<void>((resolve) => sftp.mkdir(current, () => resolve()));
+    }
+  })();
+}
+
 // Recursive background implementation parameters
-async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint, target: TransferEndpoint) {
+async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint, target: TransferEndpoint, move: boolean = false) {
   const progress = activeTransferJobs.get(jobId);
   if (!progress) return;
 
@@ -916,12 +937,33 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
   try {
     // Stage 1: Stat source nodes
-    let entriesToCopy: { relPath: string; absoluteSource: string; size: number }[] = [];
+    const entriesToCopy: { relPath: string; absoluteSource: string; size: number }[] = [];
 
     // Fetch information recursively first to gather full count + sizes
     updateProgress("Calculating contents...", 1);
 
     const activePaths = source.paths && source.paths.length > 0 ? source.paths : [source.path];
+
+    // For a move, the original source items are deleted only after the copy of
+    // all entries has fully succeeded (so a failed/cancelled copy never loses data).
+    const deleteSourcePaths = async () => {
+      for (const original of activePaths) {
+        if (source.type === "local") {
+          await fs.promises.rm(path.resolve(original), { recursive: true, force: true });
+        } else {
+          const { client } = getSSHSession(source.connectionId!);
+          await new Promise<void>((resolve, reject) => {
+            client.exec(`rm -rf ${shq(original)}`, (err, stream) => {
+              if (err) return reject(err);
+              stream.on("close", (code: number) =>
+                code === 0 ? resolve() : reject(new Error(`Remote rm exited with code ${code}`)));
+              stream.stderr.resume();
+              stream.resume();
+            });
+          });
+        }
+      }
+    };
 
     for (const srcPath of activePaths) {
       checkCancellation();
@@ -1046,6 +1088,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
         }
       }
       
+      if (move) await deleteSourcePaths();
       activeTransferJobs.set(jobId, {
         active: false,
         title: "Successfully Completed",
@@ -1097,20 +1140,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
         const { sftp } = getSSHSession(target.connectionId!);
         const dstDir = path.dirname(targetAbsPath);
 
-        // Helper to recursively make dirs in SFTP
-        const remoteMkdirRecursive = async (p: string) => {
-          const parts = p.split("/").filter(Boolean);
-          let current = "";
-          if (p.startsWith("/")) current = "/";
-          for (const item of parts) {
-            current = path.join(current, item).replace(/\\/g, "/");
-            await new Promise<void>((resolve) => {
-              sftp.mkdir(current, () => resolve()); // Safe ignore existing dir error
-            });
-          }
-        };
-
-        await remoteMkdirRecursive(dstDir);
+        await sftpMkdirP(sftp, dstDir);
 
         await new Promise<void>((resolve, reject) => {
           const localReadStream = fs.createReadStream(entry.absoluteSource);
@@ -1123,6 +1153,9 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
           localReadStream.on("error", reject);
           remoteWriteStream.on("error", reject);
+          // ssh2 SFTP write streams reliably emit "close" on completion;
+          // "finish" is kept as a fallback. resolve() is idempotent.
+          remoteWriteStream.on("close", () => resolve());
           remoteWriteStream.on("finish", () => resolve());
           localReadStream.pipe(remoteWriteStream);
         });
@@ -1157,7 +1190,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
           await new Promise<void>((resolve, reject) => {
             // Replaces path to destination recursively
             const remoteFolderParent = path.dirname(targetAbsPath);
-            client.exec(`mkdir -p "${remoteFolderParent}" && cp -r "${entry.absoluteSource}" "${targetAbsPath}"`, (err, stream) => {
+            client.exec(`mkdir -p ${shq(remoteFolderParent)} && cp -r ${shq(entry.absoluteSource)} ${shq(targetAbsPath)}`, (err, stream) => {
               if (err) reject(err);
               else {
                 stream.on("close", (code) => {
@@ -1181,18 +1214,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
           const dstDir = path.dirname(targetAbsPath);
 
           // Build directories
-          const remoteDstMkdir = async (p: string) => {
-            const parts = p.split("/").filter(Boolean);
-            let current = "";
-            if (p.startsWith("/")) current = "/";
-            for (const item of parts) {
-              current = path.join(current, item).replace(/\\/g, "/");
-              await new Promise<void>((resolve) => {
-                sftpDst.mkdir(current, () => resolve());
-              });
-            }
-          };
-          await remoteDstMkdir(dstDir);
+          await sftpMkdirP(sftpDst, dstDir);
 
           await new Promise<void>((resolve, reject) => {
             const srcStream = sftpSrc.createReadStream(entry.absoluteSource);
@@ -1205,6 +1227,8 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
             srcStream.on("error", reject);
             dstStream.on("error", reject);
+            // ssh2 SFTP write streams reliably emit "close"; "finish" fallback.
+            dstStream.on("close", () => resolve());
             dstStream.on("finish", () => resolve());
             srcStream.pipe(dstStream);
           });
@@ -1212,12 +1236,17 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
       }
     }
 
+    if (move) {
+      updateProgress("Removing source items (move)...", 100, totalBytes);
+      await deleteSourcePaths();
+    }
+
     // Mark job done!
     activeTransferJobs.set(jobId, {
       active: false,
       title: "Successfully Completed",
       percentage: 100,
-      currentItem: `All items copied successfully! (${entriesToCopy.length} elements)`,
+      currentItem: `All items ${move ? "moved" : "copied"} successfully! (${entriesToCopy.length} elements)`,
       bytesTransferred: totalBytes,
       totalBytes,
     });
@@ -1252,8 +1281,9 @@ app.post("/api/terminal/exec", async (req, res) => {
       }
 
       const { client } = session;
-      const escapedCwd = cwd ? cwd.replace(/"/g, '\\"') : ".";
-      const fullCmd = `cd "${escapedCwd}" && ${cmd}`;
+      // cwd is escaped; cmd is the user's literal terminal input and is meant
+      // to be interpreted by the remote shell, so it stays raw by design.
+      const fullCmd = `cd ${shq(cwd || ".")} && ${cmd}`;
 
       client.exec(fullCmd, (err, stream) => {
         if (err) {
@@ -1310,6 +1340,19 @@ function resolveLocalShell(shell: string): { file: string; args: string[] } {
   }
 }
 
+// Reject cross-site WebSocket upgrades. A browser always sends Origin, so we
+// only allow same-machine origins; absent Origin (non-browser clients) is fine.
+function isAllowedOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    const host = new URL(origin).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
 function attachPtyWebSocket(server: import("http").Server) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -1317,6 +1360,11 @@ function attachPtyWebSocket(server: import("http").Server) {
     const url = new URL(req.url || "", "http://localhost");
     // Only handle our PTY path; let everything else (e.g. Vite HMR) pass.
     if (url.pathname !== "/api/pty") return;
+    if (!isAllowedOrigin(req)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);
     });
@@ -1346,7 +1394,7 @@ function attachPtyWebSocket(server: import("http").Server) {
           return;
         }
         // Move to the pane's directory, then optionally run a command.
-        if (cwd) stream.write(`cd "${cwd.replace(/"/g, '\\"')}"\n`);
+        if (cwd) stream.write(`cd ${shq(cwd)}\n`);
         if (initialCommand) stream.write(`${initialCommand}\n`);
 
         stream.on("data", (d: Buffer) => ws.readyState === ws.OPEN && ws.send(d.toString("utf-8")));
@@ -1418,8 +1466,8 @@ async function start() {
     });
   }
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Express server running on http://localhost:${PORT}`);
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`Express server running on http://${HOST}:${PORT}`);
   });
   attachPtyWebSocket(server);
 }

@@ -234,12 +234,30 @@ and return that pane to the local filesystem.
 
 ```bash
 npm run build      # bundle client + server
-npm run start      # run the bundled server (serves on port 3000)
+npm run start      # run the bundled server in production mode (serves on port 3000)
 ```
 
 Ensure the same prerequisites (Node + build toolchain for `node-pty`) exist on the
-target machine. Run behind a trusted network — SSH Commander grants filesystem and
-shell access via the browser.
+target machine.
+
+**Security:** by default the server binds to **loopback (`127.0.0.1`) only**, so the
+API is not reachable from the network, and requests with an unexpected `Host` header
+are rejected (DNS-rebinding mitigation). To reach it from other machines, set
+`HOST=0.0.0.0` — but SSH Commander ships with **no authentication** and grants
+filesystem + shell access through the browser, so only do that behind your own auth
+on a trusted network. The text viewer/editor also refuses files larger than **10 MB**
+(transfer those instead of opening them).
+
+### Quality checks
+
+Before committing or deploying, run the same gate CI runs:
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # eslint
+npm test            # vitest unit tests
+npm run build       # production bundle
+```
 
 ## 20. Troubleshooting
 
@@ -251,6 +269,8 @@ shell access via the browser.
 | "Could not read private key file"         | Check the key **path** (on the SSH Commander host); `~` = home dir. |
 | Remote "Compress…" to `.zip` errors       | Install `zip`/`unzip` on the remote, or use `.tar.gz`.              |
 | Remote pane shows the wrong files         | Reconnect via `CONNECT SSH`; confirm host/credentials.              |
+| "File is too large to open as text"       | Viewer/editor cap is 10 MB — copy/transfer the file instead of opening it. |
+| 403 / requests blocked opening the app    | Loopback Host guard: open at `http://localhost:3000` or `http://127.0.0.1:3000` (or set `HOST` to expose deliberately). |
 
 ## 21. Keyboard reference
 
