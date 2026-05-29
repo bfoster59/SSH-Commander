@@ -1461,8 +1461,15 @@ async function start() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    // SPA fallback: serve the prebuilt index.html for any unmatched GET/HEAD.
+    // The dist bundle is immutable in production, so read index.html once at
+    // startup and serve it from memory. This avoids a per-request filesystem
+    // read in the catch-all (faster, and no user-influenced path access), and
+    // sidesteps Express 5 / path-to-regexp v8 rejecting the bare "*" route.
+    const indexHtml = fs.readFileSync(path.join(distPath, "index.html"));
+    app.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+      res.type("html").send(indexHtml);
     });
   }
 
