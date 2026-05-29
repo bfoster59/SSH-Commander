@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local session handoff notes (not for the public repo)
+.remember/
