@@ -1,17 +1,23 @@
 version: 2
 updates:
-  # npm dependencies — one grouped PR per week to keep noise down.
+  # npm — group only safe minor + patch updates into one PR. Major updates
+  # arrive as separate, individually reviewable PRs (they often need migration).
   - package-ecosystem: npm
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     groups:
-      npm-dependencies:
+      npm-minor-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
-  # Keep GitHub Actions (CI, CodeQL) pinned versions current.
+  # GitHub Actions — same policy: group minor/patch, majors separate.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
