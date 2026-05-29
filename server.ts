@@ -669,7 +669,7 @@ app.post("/api/ssh/delete", (req, res) => {
           }
         });
       } else {
-        stream.on("close", (code) => {
+        stream.on("close", (code: number) => {
           if (code !== 0) {
             // Unlink as reliable fallback
             sftp.unlink(remotePath, (unlinkErr) => {
@@ -745,7 +745,7 @@ app.post("/api/ssh/search", (req, res) => {
         stream.stderr.on("data", (data: any) => {
           stderr += data.toString();
         });
-        stream.on("close", (code) => {
+        stream.on("close", (code: number) => {
           if (code !== 0 || !stdout.trim()) {
             runSFTPSearch(sftp, targetPath, query, res);
           } else {
@@ -1170,7 +1170,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
           const remoteReadStream = sftp.createReadStream(entry.absoluteSource);
           const localWriteStream = fs.createWriteStream(targetAbsPath);
 
-          remoteReadStream.on("data", (chunk) => {
+          remoteReadStream.on("data", (chunk: Buffer) => {
             bytesAccumulated += chunk.length;
             updateProgress(`Downloading ${entry.relPath}`, Math.round((bytesAccumulated / totalBytes) * 100), bytesAccumulated);
           });
@@ -1193,7 +1193,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
             client.exec(`mkdir -p ${shq(remoteFolderParent)} && cp -r ${shq(entry.absoluteSource)} ${shq(targetAbsPath)}`, (err, stream) => {
               if (err) reject(err);
               else {
-                stream.on("close", (code) => {
+                stream.on("close", (code: number) => {
                   if (code === 0) {
                     bytesAccumulated += entry.size;
                     resolve();
@@ -1220,7 +1220,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
             const srcStream = sftpSrc.createReadStream(entry.absoluteSource);
             const dstStream = sftpDst.createWriteStream(targetAbsPath);
 
-            srcStream.on("data", (chunk) => {
+            srcStream.on("data", (chunk: Buffer) => {
               bytesAccumulated += chunk.length;
               updateProgress(`Piping remote -> remote: ${entry.relPath}`, Math.round((bytesAccumulated / totalBytes) * 100), bytesAccumulated);
             });
@@ -1297,7 +1297,7 @@ app.post("/api/terminal/exec", async (req, res) => {
         stream.stderr.on("data", (data: any) => {
           stderr += data.toString();
         });
-        stream.on("close", (code) => {
+        stream.on("close", (code: number) => {
           res.json({ stdout, stderr, code: code ?? 0 });
         });
       });
