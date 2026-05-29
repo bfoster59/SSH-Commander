@@ -3,14 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import { FileEntry, ConnectionProfile, OperationProgress } from "./types";
 import FileTable from "./components/FileTable";
 import CommandBar from "./components/CommandBar";
 import ConnectionDialog from "./components/ConnectionDialog";
-import FileViewer from "./components/FileViewer";
-import FileEditor from "./components/FileEditor";
-import TerminalModal from "./components/TerminalModal";
+// Heavy modals are code-split: FileViewer/FileEditor pull in highlight.js and
+// TerminalModal pulls in xterm. Lazy-loading them keeps those deps out of the
+// initial bundle — each chunk loads the first time its modal is opened.
+const FileViewer = lazy(() => import("./components/FileViewer"));
+const FileEditor = lazy(() => import("./components/FileEditor"));
+const TerminalModal = lazy(() => import("./components/TerminalModal"));
 import { usePaneSide, PaneTab } from "./hooks/useFilePane";
 import { useDialogs } from "./components/Dialogs";
 import { apiPost } from "./lib/api";
@@ -1226,40 +1229,52 @@ export default function App() {
         onConnect={handleConnectSSH}
       />
 
-      {/* Custom F3 text reader overlay viewer */}
-      <FileViewer
-        isOpen={viewerOpen}
-        onClose={() => setViewerOpen(false)}
-        fileName={viewerFileName}
-        filePath={viewerFilePath}
-        content={viewerContent}
-        isRemote={viewerIsRemote}
-        category={viewerCategory}
-        rawUrl={viewerRawUrl}
-      />
+      {/* Custom F3 text reader overlay viewer (lazy-loaded on first open) */}
+      {viewerOpen && (
+        <Suspense fallback={null}>
+          <FileViewer
+            isOpen={viewerOpen}
+            onClose={() => setViewerOpen(false)}
+            fileName={viewerFileName}
+            filePath={viewerFilePath}
+            content={viewerContent}
+            isRemote={viewerIsRemote}
+            category={viewerCategory}
+            rawUrl={viewerRawUrl}
+          />
+        </Suspense>
+      )}
 
-      {/* Custom F4 text composer editor modal */}
-      <FileEditor
-        isOpen={editorOpen}
-        onClose={() => setEditorOpen(false)}
-        fileName={editorFileName}
-        filePath={editorFilePath}
-        initialContent={editorContent}
-        isRemote={editorIsRemote}
-        onSave={handleEditorSave}
-      />
+      {/* Custom F4 text composer editor modal (lazy-loaded on first open) */}
+      {editorOpen && (
+        <Suspense fallback={null}>
+          <FileEditor
+            isOpen={editorOpen}
+            onClose={() => setEditorOpen(false)}
+            fileName={editorFileName}
+            filePath={editorFilePath}
+            initialContent={editorContent}
+            isRemote={editorIsRemote}
+            onSave={handleEditorSave}
+          />
+        </Suspense>
+      )}
 
-      {/* Interactive native shell/SSH terminal session portal */}
-      <TerminalModal
-        isOpen={terminalOpen}
-        onClose={() => setTerminalOpen(false)}
-        paneId={terminalPaneId}
-        type={terminalPaneId === 'left' ? leftType : rightType}
-        connectionId={terminalPaneId === 'left' ? leftConnectionId : rightConnectionId}
-        connectionName={terminalPaneId === 'left' ? leftConnectionName : rightConnectionName}
-        initialPath={terminalInitialPath}
-        initialCommand={terminalInitialCommand}
-      />
+      {/* Interactive native shell/SSH terminal session portal (lazy-loaded) */}
+      {terminalOpen && (
+        <Suspense fallback={null}>
+          <TerminalModal
+            isOpen={terminalOpen}
+            onClose={() => setTerminalOpen(false)}
+            paneId={terminalPaneId}
+            type={terminalPaneId === 'left' ? leftType : rightType}
+            connectionId={terminalPaneId === 'left' ? leftConnectionId : rightConnectionId}
+            connectionName={terminalPaneId === 'left' ? leftConnectionName : rightConnectionName}
+            initialPath={terminalInitialPath}
+            initialCommand={terminalInitialCommand}
+          />
+        </Suspense>
+      )}
 
       {/* Highly polished, responsive recursive search modal overlay */}
       {searchOpen && (
