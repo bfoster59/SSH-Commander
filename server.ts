@@ -1461,7 +1461,10 @@ async function start() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    // SPA fallback: serve index.html for any GET not matched above.
+    // Express 5 / path-to-regexp v8 rejects the bare "*" string path, so use
+    // a regex catch-all (valid in both Express 4 and 5).
+    app.get(/.*/, (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
