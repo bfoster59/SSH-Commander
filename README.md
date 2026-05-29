@@ -88,13 +88,15 @@ npm test           # vitest unit tests (path/shell-quoting/classification logic)
 
 ## Configuration
 
-No environment variables are required. See [.env.example](.env.example):
+No environment variables are required. Optional ones (see [.env.example](.env.example)):
 
-| Variable      | Purpose                                                        |
-| ------------- | -------------------------------------------------------------- |
-| `DISABLE_HMR` | Set to `true` to turn off Vite hot-reload / file watching.     |
+| Variable      | Purpose                                                                          |
+| ------------- | -------------------------------------------------------------------------------- |
+| `HOST`        | Address to bind. Defaults to `127.0.0.1` (loopback). Set `0.0.0.0` to expose it. |
+| `DISABLE_HMR` | Set to `true` to turn off Vite hot-reload / file watching (dev only).            |
 
-The server listens on **port 3000**.
+The server listens on **port 3000**. Open it via `localhost` / `127.0.0.1` — while
+bound to loopback, requests with another `Host` header are rejected (see Security notes).
 
 ---
 
