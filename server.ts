@@ -193,21 +193,36 @@ app.post("/api/local/read", async (req, res) => {
   try {
     const { path: filePath } = req.body;
     const resolved = path.resolve(filePath);
-    
-    // Check if is file
-    const stat = await fs.promises.stat(resolved);
-    if (!stat.isFile()) {
-      return res.status(400).json({ error: "Target is a directory, cannot read as file" });
-    }
-    if (stat.size > MAX_TEXT_READ_BYTES) {
-      return res.status(413).json({
-        error: `File is too large to open as text (${Math.round(stat.size / 1048576)} MB; limit ${MAX_TEXT_READ_BYTES / 1048576} MB).`,
-      });
-    }
 
-    // Support UTF-8 textual reading
-    const content = await fs.promises.readFile(resolved, "utf-8");
-    res.json({ content });
+    // Open the file once and derive type, size, and content from the SAME
+    // handle. Doing every check on the open fd (rather than re-statting the
+    // path) closes the TOCTOU window where the file could be swapped between
+    // a check and the read.
+    let handle: fs.promises.FileHandle;
+    try {
+      handle = await fs.promises.open(resolved, "r");
+    } catch (openErr: any) {
+      // Opening a directory fails with EISDIR on some platforms (e.g. Windows).
+      if (openErr?.code === "EISDIR") {
+        return res.status(400).json({ error: "Target is a directory, cannot read as file" });
+      }
+      throw openErr;
+    }
+    try {
+      const stat = await handle.stat();
+      if (stat.isDirectory()) {
+        return res.status(400).json({ error: "Target is a directory, cannot read as file" });
+      }
+      if (stat.size > MAX_TEXT_READ_BYTES) {
+        return res.status(413).json({
+          error: `File is too large to open as text (${Math.round(stat.size / 1048576)} MB; limit ${MAX_TEXT_READ_BYTES / 1048576} MB).`,
+        });
+      }
+      const content = await handle.readFile("utf-8");
+      res.json({ content });
+    } finally {
+      await handle.close();
+    }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

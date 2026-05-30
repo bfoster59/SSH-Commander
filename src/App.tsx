@@ -17,7 +17,7 @@ const TerminalModal = lazy(() => import("./components/TerminalModal"));
 import { usePaneSide, PaneTab } from "./hooks/useFilePane";
 import { useDialogs } from "./components/Dialogs";
 import { apiPost } from "./lib/api";
-import { joinPath, parentPath, baseName } from "./lib/paths";
+import { joinPath, parentPath } from "./lib/paths";
 import { classifyFile } from "./lib/classify";
 import {
   Search,
@@ -121,9 +121,6 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
-
-  // Track file context highlight after navigating back from Search Matches
-  const [pendingSelection, setPendingSelection] = useState<{ pane: 'left' | 'right'; name: string } | null>(null);
 
   // Terminal state parameters
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -789,8 +786,7 @@ export default function App() {
     if (match.isDirectory) {
       await handleNavigate(pane, targetPath);
     } else {
-      // Navigate to the file's parent folder and remember it for highlighting.
-      setPendingSelection({ pane, name: baseName(targetPath) });
+      // Navigate to the file's parent folder.
       await handleNavigate(pane, parentPath(targetPath));
     }
   };
