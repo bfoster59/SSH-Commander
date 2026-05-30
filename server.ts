@@ -193,21 +193,29 @@ app.post("/api/local/read", async (req, res) => {
   try {
     const { path: filePath } = req.body;
     const resolved = path.resolve(filePath);
-    
-    // Check if is file
-    const stat = await fs.promises.stat(resolved);
-    if (!stat.isFile()) {
+
+    // Friendly type check up front (cross-platform directory message).
+    const pre = await fs.promises.stat(resolved);
+    if (!pre.isFile()) {
       return res.status(400).json({ error: "Target is a directory, cannot read as file" });
     }
-    if (stat.size > MAX_TEXT_READ_BYTES) {
-      return res.status(413).json({
-        error: `File is too large to open as text (${Math.round(stat.size / 1048576)} MB; limit ${MAX_TEXT_READ_BYTES / 1048576} MB).`,
-      });
-    }
 
-    // Support UTF-8 textual reading
-    const content = await fs.promises.readFile(resolved, "utf-8");
-    res.json({ content });
+    // Open once, then size-gate and read from the SAME handle so the size
+    // check and the read can't race against the file being swapped underneath
+    // us between the two operations (TOCTOU).
+    const handle = await fs.promises.open(resolved, "r");
+    try {
+      const stat = await handle.stat();
+      if (stat.size > MAX_TEXT_READ_BYTES) {
+        return res.status(413).json({
+          error: `File is too large to open as text (${Math.round(stat.size / 1048576)} MB; limit ${MAX_TEXT_READ_BYTES / 1048576} MB).`,
+        });
+      }
+      const content = await handle.readFile("utf-8");
+      res.json({ content });
+    } finally {
+      await handle.close();
+    }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
