@@ -29,3 +29,21 @@ browser. By design:
 Reports of **command injection, path traversal beyond the intended model, or bypasses
 of the auth/origin/Host guards** — anything that escalates past the documented
 loopback model — are very welcome.
+
+## Automated code-scanning (CodeQL) findings
+
+CodeQL's `security-and-quality` suite flags patterns that are inherent to what this tool
+*is*. They appear **dismissed** in the Security tab with documented reasons — not ignored,
+but accepted as the feature operating within the loopback model above:
+
+- **`js/path-injection`** — browsing and operating on user-chosen local/remote paths is the
+  core of a file manager. Mitigated by the loopback bind + Host-header guard.
+- **`js/command-line-injection`** — remote shell actions pass paths through `shq()`, a
+  single-quote shell escaper (unit-tested in `tests/server-utils.test.ts`); the terminal
+  endpoint intentionally runs the user's own typed command on their own machine.
+- **`js/missing-rate-limiting`** — single-user and loopback-bound with no network exposure
+  by default, so per-route rate limiting does not apply.
+- **`js/http-to-file-access`** — writing user-provided content to disk (connection profiles,
+  file save) is a feature.
+
+Findings introduced by *new* changes are triaged individually on each PR, not blanket-dismissed.
