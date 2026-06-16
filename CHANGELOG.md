@@ -4,6 +4,26 @@ All notable changes to SSH Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-06-16
+
+Tightening pass on the transfer pipeline + repo hygiene.
+
+### Added
+- Unit tests for the transfer pipeline's decision logic — failure classification,
+  move-delete safety (incl. a data-loss invariant), and the status summary. This
+  code held both prior bugs and previously had no coverage.
+
+### Fixed
+- **Broken symlinks** are now reported as `broken symlink (...)` instead of a bare
+  "No such file", and a broken **local** symlink no longer aborts a folder scan.
+- **Multi-select moves are data-loss-safe.** A move deletes only the source paths
+  whose every file copied (keyed by source index), keeping any source that had a
+  failed file under it — closing an edge where a non-normalized source path could
+  be deleted despite a failed file beneath it.
+
+### Changed
+- The connect-dialog host placeholder uses a generic example IP.
+
 ## [0.1.0] - 2026-06-16
 
 First stabilized release — two reliability fixes to the core SSH + transfer experience.
