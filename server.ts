@@ -52,22 +52,15 @@ interface ActiveSSH {
 const sshPool = new Map<string, ActiveSSH>();
 const activeTransferJobs = new Map<string, OperationProgress & { cancelRequested?: boolean }>();
 
-// Heartbeat cleanup for inactive SSH sessions (e.g. idle > 15 mins)
-setInterval(() => {
-  const idleThreshold = 15 * 60 * 1000;
-  const now = Date.now();
-  for (const [id, connection] of sshPool.entries()) {
-    if (now - connection.lastActive > idleThreshold) {
-      console.log(`Closing idle SSH connection: ${connection.profile.name} (${id})`);
-      try {
-        connection.client.end();
-      } catch (e) {
-        // Safe ignore
-      }
-      sshPool.delete(id);
-    }
-  }
-}, 60 * 1000);
+// SSH sessions are kept alive for as long as they stay actually connected. We do
+// NOT cull sessions by wall-clock idle time: keepalive traffic (set on connect)
+// does not update lastActive, so an idle-time reaper would force-close a live
+// connection the user still has open — the cause of the "drops after a few
+// minutes / 15 min" disconnect bug. Liveness and cleanup are handled by ssh2
+// keepalive (keepaliveCountMax closes a genuinely-dead peer -> client "close" ->
+// pool delete), the client "close" handler, and the explicit /api/ssh/disconnect
+// endpoint. (A truly abandoned-but-still-connected session lingers until the peer
+// drops; acceptable for a single-user local tool.)
 
 // Helper to check and retrieve active SSH session
 function getSSHSession(connectionId: string): ActiveSSH {
@@ -520,6 +513,13 @@ app.post("/api/ssh/connect", (req, res) => {
 
   // Set timeout of 15 seconds
   connectionOpts.readyTimeout = 15000;
+
+  // Keep the SSH channel alive across idle periods. Without this, a NAT/firewall
+  // or server idle timeout silently drops the socket after a few minutes and the
+  // session resets to local-drive selection. ssh2 sends a keepalive every 15s and
+  // only treats the peer as dead after 4 unanswered ones (~60s).
+  connectionOpts.keepaliveInterval = 15000;
+  connectionOpts.keepaliveCountMax = 4;
 
   try {
     client.connect(connectionOpts);
