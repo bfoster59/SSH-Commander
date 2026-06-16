@@ -9,3 +9,6 @@ coverage/
 
 # Local session handoff notes (not for the public repo)
 .remember/
+
+# Stray editor/desktop screenshots dropped at the repo root
+/Screenshot*.png

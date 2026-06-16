@@ -9,7 +9,7 @@ import * as pty from "node-pty";
 import type { IncomingMessage } from "http";
 import AdmZip from "adm-zip";
 import * as tar from "tar";
-import { shq, archiveBaseName, mimeForPath, MAX_TEXT_READ_BYTES } from "./server-utils.js";
+import { shq, archiveBaseName, mimeForPath, MAX_TEXT_READ_BYTES, isFatalTransferError, fullySucceededSources, transferSummary } from "./server-utils.js";
 
 const app = express();
 const PORT = 3000;
@@ -948,7 +948,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
   try {
     // Stage 1: Stat source nodes
-    const entriesToCopy: { relPath: string; absoluteSource: string; size: number }[] = [];
+    const entriesToCopy: { relPath: string; absoluteSource: string; size: number; isSymlink?: boolean }[] = [];
 
     // Fetch information recursively first to gather full count + sizes
     updateProgress("Calculating contents...", 1);
@@ -957,8 +957,8 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
     // For a move, the original source items are deleted only after the copy of
     // all entries has fully succeeded (so a failed/cancelled copy never loses data).
-    const deleteSourcePaths = async () => {
-      for (const original of activePaths) {
+    const deleteSourcePaths = async (pathsToDelete: string[]) => {
+      for (const original of pathsToDelete) {
         if (source.type === "local") {
           await fs.promises.rm(path.resolve(original), { recursive: true, force: true });
         } else {
@@ -995,11 +995,17 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
               if (item.isDirectory()) {
                 await scanDirRecursive(absolutePath);
               } else {
-                const fileStat = await fs.promises.stat(absolutePath);
+                // Guard the stat so a broken symlink (or unreadable file) doesn't
+                // abort the whole scan — push it anyway and let the copy loop record
+                // it as a per-file failure.
+                const isSym = item.isSymbolicLink();
+                let size = 0;
+                try { size = (await fs.promises.stat(absolutePath)).size; } catch { /* broken/unreadable */ }
                 entriesToCopy.push({
                   relPath,
                   absoluteSource: absolutePath,
-                  size: fileStat.size,
+                  size,
+                  isSymlink: isSym,
                 });
               }
             }
@@ -1041,6 +1047,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
               const absolutePath = path.join(currPath, item.filename).replace(/\\/g, "/");
               const relPath = path.relative(path.dirname(resolvedSrcPath), absolutePath).replace(/\\/g, "/");
               const itemIsDir = (item.attrs.mode & 0o170000) === 0o040000;
+              const itemIsSym = (item.attrs.mode & 0o170000) === 0o120000;
 
               if (itemIsDir) {
                 await scanRemoteRecursive(absolutePath);
@@ -1049,6 +1056,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
                   relPath,
                   absoluteSource: absolutePath,
                   size: item.attrs.size,
+                  isSymlink: itemIsSym,
                 });
               }
             }
@@ -1099,7 +1107,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
         }
       }
       
-      if (move) await deleteSourcePaths();
+      if (move) await deleteSourcePaths(activePaths);
       activeTransferJobs.set(jobId, {
         active: false,
         title: "Successfully Completed",
@@ -1251,52 +1259,43 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
         }
       }
       } catch (entryErr: any) {
-        const reason = entryErr?.message || String(entryErr);
+        const rawReason = entryErr?.message || String(entryErr);
         // Whole-job aborts (NOT per-file failures): a user cancel, or the SSH
-        // session dropping/expiring mid-batch. Continuing past a dropped session
-        // would record every remaining file as a bogus per-file failure and mask
-        // the real cause, so rethrow to fail the job honestly.
-        if (reason === "OPERATION_CANCELLED" || reason.includes("expired or does not exist")) throw entryErr;
-        // One file failed (e.g. unreadable on the source, or a name that is legal
-        // on Linux but illegal on Windows). Record it and keep going so a single
-        // bad file can't abort the whole folder transfer.
+        // session dropping/expiring mid-batch — rethrow so the job fails honestly
+        // instead of recording every remaining file as a bogus per-file failure.
+        if (isFatalTransferError(rawReason)) throw entryErr;
+        // One file failed (a broken symlink, an unreadable file, or a name legal
+        // on the source OS but illegal on the destination). Record it and keep
+        // going so a single bad file can't abort the whole folder transfer.
+        const reason = entry.isSymlink ? `broken symlink (${rawReason})` : rawReason;
         failures.push({ relPath: entry.relPath, reason });
       }
     }
 
     if (move) {
-      if (failures.length === 0) {
+      // Delete only the source paths whose every file copied; any source with a
+      // failed file under it is kept, so a move can never lose a file that didn't
+      // make it across (see fullySucceededSources).
+      const sourcesToDelete = fullySucceededSources(activePaths, failures);
+      if (sourcesToDelete.length > 0) {
         updateProgress("Removing source items (move)...", 100, totalBytes);
-        await deleteSourcePaths();
-      } else {
-        // Some files failed to copy — do NOT delete the source, or the files that
-        // never made it across would be lost. The move keeps the originals.
-        updateProgress(`Move kept the source: ${failures.length} file(s) failed to copy.`, 100, totalBytes);
+        await deleteSourcePaths(sourcesToDelete);
+      }
+      if (sourcesToDelete.length < activePaths.length) {
+        updateProgress(`Kept ${activePaths.length - sourcesToDelete.length} source(s) with failed files.`, 100, totalBytes);
       }
     }
 
     // Mark job done — surface any per-file failures instead of hiding them.
-    if (failures.length === 0) {
-      activeTransferJobs.set(jobId, {
-        active: false,
-        title: "Successfully Completed",
-        percentage: 100,
-        currentItem: `All items ${move ? "moved" : "copied"} successfully! (${entriesToCopy.length} elements)`,
-        bytesTransferred: totalBytes,
-        totalBytes,
-      });
-    } else {
-      const shown = failures.slice(0, 3).map(f => `${f.relPath} (${f.reason})`).join("; ");
-      const more = failures.length > 3 ? ` …and ${failures.length - 3} more` : "";
-      activeTransferJobs.set(jobId, {
-        active: false,
-        title: "Completed with errors",
-        percentage: 100,
-        currentItem: `${entriesToCopy.length - failures.length}/${entriesToCopy.length} ${move ? "moved" : "copied"}; ${failures.length} failed: ${shown}${more}.${move ? " Source kept." : ""}`,
-        bytesTransferred: bytesAccumulated,
-        totalBytes,
-      });
-    }
+    const summary = transferSummary({ total: entriesToCopy.length, failures, move });
+    activeTransferJobs.set(jobId, {
+      active: false,
+      title: summary.title,
+      percentage: 100,
+      currentItem: summary.currentItem,
+      bytesTransferred: failures.length === 0 ? totalBytes : bytesAccumulated,
+      totalBytes,
+    });
 
   } catch (err: any) {
     console.error(`Error during copying worker in ${jobId}:`, err);

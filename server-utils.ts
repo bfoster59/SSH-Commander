@@ -37,3 +37,60 @@ export function mimeForPath(p: string): string {
  * blowing up the server's heap.
  */
 export const MAX_TEXT_READ_BYTES = 10 * 1024 * 1024; // 10 MB
+
+// ---- Transfer-worker pure helpers (unit-tested in tests/transfer.test.ts) ----
+
+export interface TransferFailure {
+  relPath: string;
+  reason: string;
+}
+
+/**
+ * Whether a transfer error should abort the WHOLE job rather than be recorded as
+ * one per-file failure. A user cancel, or the SSH session dropping/expiring
+ * mid-batch, must fail the job honestly — continuing would record every remaining
+ * file as a bogus per-file failure and mask the real cause.
+ */
+export function isFatalTransferError(message: string): boolean {
+  return message === "OPERATION_CANCELLED" || message.includes("expired or does not exist");
+}
+
+/**
+ * For a `move`, decide which top-level source paths are safe to delete: ONLY those
+ * whose every descendant copied successfully. A source with ANY failed file under
+ * it is kept, so a move can never delete a file that did not make it across.
+ * Entry relPaths are relative to the source's PARENT, so they begin with the
+ * source's own basename (e.g. source `/home/u/vault` → relPaths `vault/...`).
+ */
+export function fullySucceededSources(activePaths: string[], failures: TransferFailure[]): string[] {
+  if (failures.length === 0) return [...activePaths];
+  return activePaths.filter((p) => {
+    const base = p.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || p;
+    return !failures.some(
+      (f) => f.relPath === base || f.relPath.startsWith(`${base}/`) || f.relPath.startsWith(`${base}\\`),
+    );
+  });
+}
+
+/** Build the final job status (title + currentItem) from the transfer outcome. */
+export function transferSummary(opts: {
+  total: number;
+  failures: TransferFailure[];
+  move: boolean;
+}): { title: string; currentItem: string } {
+  const { total, failures, move } = opts;
+  const verb = move ? "moved" : "copied";
+  if (failures.length === 0) {
+    return {
+      title: "Successfully Completed",
+      currentItem: `All items ${verb} successfully! (${total} elements)`,
+    };
+  }
+  const shown = failures.slice(0, 3).map((f) => `${f.relPath} (${f.reason})`).join("; ");
+  const more = failures.length > 3 ? ` …and ${failures.length - 3} more` : "";
+  const kept = move ? " Sources with failures kept." : "";
+  return {
+    title: "Completed with errors",
+    currentItem: `${total - failures.length}/${total} ${verb}; ${failures.length} failed: ${shown}${more}.${kept}`,
+  };
+}

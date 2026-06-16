@@ -228,7 +228,7 @@ export default function ConnectionDialog({ isOpen, onClose, onConnect }: Connect
                 <input
                   type="text"
                   required
-                  placeholder="ssh.example.com or 10.0.0.12"
+                  placeholder="ssh.example.com or 192.168.1.50"
                   value={host}
                   onChange={e => setHost(e.target.value)}
                   className="w-full text-xs p-2.5 rounded bg-[var(--color-panel)] border border-[var(--color-border)] text-[var(--color-content)] focus:outline-none focus:border-[#339AF0] placeholder-slate-655 font-mono"
