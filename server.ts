@@ -1120,6 +1120,10 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
     progress.totalBytes = totalBytes;
     let bytesAccumulated = 0;
 
+    // Per-file failures are collected so one bad file (unreadable, or a name
+    // illegal on the target OS) can't abort the whole batch. See the catch below.
+    const failures: { relPath: string; reason: string }[] = [];
+
     // Stage 2: Begin Copier loops
     for (let index = 0; index < entriesToCopy.length; index++) {
       checkCancellation();
@@ -1129,6 +1133,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
       updateProgress(`Copying ${entry.relPath} (${index + 1}/${entriesToCopy.length})`, percentageDone, bytesAccumulated);
 
+      try {
       // Branch out to the 4 copying permutations
       if (source.type === "local" && target.type === "local") {
         // LOCAL TO LOCAL
@@ -1249,22 +1254,48 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
           });
         }
       }
+      } catch (entryErr: any) {
+        if (entryErr?.message === "OPERATION_CANCELLED") throw entryErr;
+        // One file failed (e.g. unreadable on the source, or a name that is legal
+        // on Linux but illegal on Windows). Record it and keep going so a single
+        // bad file can't abort the whole folder transfer.
+        failures.push({ relPath: entry.relPath, reason: entryErr?.message || String(entryErr) });
+      }
     }
 
     if (move) {
-      updateProgress("Removing source items (move)...", 100, totalBytes);
-      await deleteSourcePaths();
+      if (failures.length === 0) {
+        updateProgress("Removing source items (move)...", 100, totalBytes);
+        await deleteSourcePaths();
+      } else {
+        // Some files failed to copy — do NOT delete the source, or the files that
+        // never made it across would be lost. The move keeps the originals.
+        updateProgress(`Move kept the source: ${failures.length} file(s) failed to copy.`, 100, totalBytes);
+      }
     }
 
-    // Mark job done!
-    activeTransferJobs.set(jobId, {
-      active: false,
-      title: "Successfully Completed",
-      percentage: 100,
-      currentItem: `All items ${move ? "moved" : "copied"} successfully! (${entriesToCopy.length} elements)`,
-      bytesTransferred: totalBytes,
-      totalBytes,
-    });
+    // Mark job done — surface any per-file failures instead of hiding them.
+    if (failures.length === 0) {
+      activeTransferJobs.set(jobId, {
+        active: false,
+        title: "Successfully Completed",
+        percentage: 100,
+        currentItem: `All items ${move ? "moved" : "copied"} successfully! (${entriesToCopy.length} elements)`,
+        bytesTransferred: totalBytes,
+        totalBytes,
+      });
+    } else {
+      const shown = failures.slice(0, 3).map(f => `${f.relPath} (${f.reason})`).join("; ");
+      const more = failures.length > 3 ? ` …and ${failures.length - 3} more` : "";
+      activeTransferJobs.set(jobId, {
+        active: false,
+        title: "Completed with errors",
+        percentage: 100,
+        currentItem: `${entriesToCopy.length - failures.length}/${entriesToCopy.length} ${move ? "moved" : "copied"}; ${failures.length} failed: ${shown}${more}.${move ? " Source kept." : ""}`,
+        bytesTransferred: bytesAccumulated,
+        totalBytes,
+      });
+    }
 
   } catch (err: any) {
     console.error(`Error during copying worker in ${jobId}:`, err);
