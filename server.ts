@@ -45,7 +45,6 @@ interface ActiveSSH {
   client: Client;
   sftp: SFTPWrapper;
   profile: ConnectionProfile;
-  lastActive: number;
 }
 
 // Memory Pools
@@ -53,14 +52,13 @@ const sshPool = new Map<string, ActiveSSH>();
 const activeTransferJobs = new Map<string, OperationProgress & { cancelRequested?: boolean }>();
 
 // SSH sessions are kept alive for as long as they stay actually connected. We do
-// NOT cull sessions by wall-clock idle time: keepalive traffic (set on connect)
-// does not update lastActive, so an idle-time reaper would force-close a live
-// connection the user still has open — the cause of the "drops after a few
-// minutes / 15 min" disconnect bug. Liveness and cleanup are handled by ssh2
-// keepalive (keepaliveCountMax closes a genuinely-dead peer -> client "close" ->
-// pool delete), the client "close" handler, and the explicit /api/ssh/disconnect
-// endpoint. (A truly abandoned-but-still-connected session lingers until the peer
-// drops; acceptable for a single-user local tool.)
+// NOT cull sessions by wall-clock idle time — an idle-time reaper would force-
+// close a live connection the user still has open (the cause of the "drops after
+// a few minutes / 15 min" disconnect bug). Liveness and cleanup are handled by
+// ssh2 keepalive (keepaliveCountMax closes a genuinely-dead peer -> client
+// "close" -> pool delete), the client "close" handler, and the explicit
+// /api/ssh/disconnect endpoint. (A truly abandoned-but-still-connected session
+// lingers until the peer drops; acceptable for a single-user local tool.)
 
 // Helper to check and retrieve active SSH session
 function getSSHSession(connectionId: string): ActiveSSH {
@@ -68,7 +66,6 @@ function getSSHSession(connectionId: string): ActiveSSH {
   if (!session) {
     throw new Error("SSH Connection has expired or does not exist. Please reconnect.");
   }
-  session.lastActive = Date.now();
   return session;
 }
 
@@ -453,7 +450,6 @@ app.post("/api/ssh/connect", (req, res) => {
         client,
         sftp,
         profile,
-        lastActive: Date.now(),
       });
 
       // Resolve the session's starting directory (the user's home on most
@@ -1255,11 +1251,16 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
         }
       }
       } catch (entryErr: any) {
-        if (entryErr?.message === "OPERATION_CANCELLED") throw entryErr;
+        const reason = entryErr?.message || String(entryErr);
+        // Whole-job aborts (NOT per-file failures): a user cancel, or the SSH
+        // session dropping/expiring mid-batch. Continuing past a dropped session
+        // would record every remaining file as a bogus per-file failure and mask
+        // the real cause, so rethrow to fail the job honestly.
+        if (reason === "OPERATION_CANCELLED" || reason.includes("expired or does not exist")) throw entryErr;
         // One file failed (e.g. unreadable on the source, or a name that is legal
         // on Linux but illegal on Windows). Record it and keep going so a single
         // bad file can't abort the whole folder transfer.
-        failures.push({ relPath: entry.relPath, reason: entryErr?.message || String(entryErr) });
+        failures.push({ relPath: entry.relPath, reason });
       }
     }
 
