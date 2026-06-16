@@ -948,7 +948,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
   try {
     // Stage 1: Stat source nodes
-    const entriesToCopy: { relPath: string; absoluteSource: string; size: number; isSymlink?: boolean }[] = [];
+    const entriesToCopy: { relPath: string; absoluteSource: string; size: number; isSymlink?: boolean; sourceIndex: number }[] = [];
 
     // Fetch information recursively first to gather full count + sizes
     updateProgress("Calculating contents...", 1);
@@ -976,7 +976,8 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
       }
     };
 
-    for (const srcPath of activePaths) {
+    for (let sourceIndex = 0; sourceIndex < activePaths.length; sourceIndex++) {
+      const srcPath = activePaths[sourceIndex];
       checkCancellation();
       const resolvedSrcPath = srcPath;
 
@@ -1006,6 +1007,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
                   absoluteSource: absolutePath,
                   size,
                   isSymlink: isSym,
+                  sourceIndex,
                 });
               }
             }
@@ -1016,6 +1018,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
             relPath: path.basename(resolvedPath),
             absoluteSource: resolvedPath,
             size: srcStat.size,
+            sourceIndex,
           });
         }
       } else {
@@ -1057,6 +1060,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
                   absoluteSource: absolutePath,
                   size: item.attrs.size,
                   isSymlink: itemIsSym,
+                  sourceIndex,
                 });
               }
             }
@@ -1067,6 +1071,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
             relPath: path.basename(resolvedSrcPath),
             absoluteSource: resolvedSrcPath,
             size: srcStats.size,
+            sourceIndex,
           });
         }
       }
@@ -1126,7 +1131,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
 
     // Per-file failures are collected so one bad file (unreadable, or a name
     // illegal on the target OS) can't abort the whole batch. See the catch below.
-    const failures: { relPath: string; reason: string }[] = [];
+    const failures: { relPath: string; reason: string; sourceIndex: number }[] = [];
 
     // Stage 2: Begin Copier loops
     for (let index = 0; index < entriesToCopy.length; index++) {
@@ -1268,7 +1273,7 @@ async function executeBackgroundTransfer(jobId: string, source: TransferEndpoint
         // on the source OS but illegal on the destination). Record it and keep
         // going so a single bad file can't abort the whole folder transfer.
         const reason = entry.isSymlink ? `broken symlink (${rawReason})` : rawReason;
-        failures.push({ relPath: entry.relPath, reason });
+        failures.push({ relPath: entry.relPath, reason, sourceIndex: entry.sourceIndex });
       }
     }
 

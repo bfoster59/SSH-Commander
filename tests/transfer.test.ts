@@ -17,52 +17,47 @@ describe("isFatalTransferError", () => {
   });
 });
 
-describe("fullySucceededSources (move-delete safety)", () => {
+describe("fullySucceededSources (move-delete safety, index-keyed)", () => {
   it("returns all sources when nothing failed", () => {
     expect(fullySucceededSources(["/home/u/vault", "/home/u/notes"], [])).toEqual(["/home/u/vault", "/home/u/notes"]);
   });
 
   it("keeps a single source if any file under it failed (no data loss)", () => {
-    const failures = [{ relPath: "vault/.venv/lib64", reason: "broken symlink (No such file)" }];
+    const failures = [{ relPath: "vault/.venv/lib64", reason: "broken symlink (No such file)", sourceIndex: 0 }];
     expect(fullySucceededSources(["/home/u/vault"], failures)).toEqual([]);
   });
 
   it("multi-select: deletes only the fully-succeeded sources", () => {
-    const failures = [{ relPath: "notes/bad:name.md", reason: "EINVAL" }];
+    // index 1 (notes) failed; index 0 (vault) is clean and may be deleted.
+    const failures = [{ relPath: "notes/bad:name.md", reason: "EINVAL", sourceIndex: 1 }];
     expect(fullySucceededSources(["/home/u/vault", "/home/u/notes"], failures)).toEqual(["/home/u/vault"]);
   });
 
-  it("matches a failure that IS the source basename (single-file source)", () => {
-    const failures = [{ relPath: "report.pdf", reason: "No such file" }];
-    expect(fullySucceededSources(["/home/u/report.pdf"], failures)).toEqual([]);
+  it("is immune to a non-normalized source path (regression for the raw-basename bug)", () => {
+    // Source "/home/u/vault/." has basename "." but its files scan to relPath "vault/...".
+    // Index-keying ignores the path text entirely, so the failed source is still kept.
+    const failures = [{ relPath: "vault/secret.txt", reason: "EACCES", sourceIndex: 0 }];
+    expect(fullySucceededSources(["/home/u/vault/."], failures)).toEqual([]);
   });
 
-  it("handles Windows-style backslash relPaths and trailing slashes", () => {
-    const failures = [{ relPath: "vault\\sub\\x.md", reason: "EACCES" }];
-    expect(fullySucceededSources(["C:\\data\\vault\\", "C:\\data\\other"], failures)).toEqual(["C:\\data\\other"]);
+  it("is immune to two selected sources sharing a basename", () => {
+    // index 1 failed; index 0 shares basename "vault" but is clean -> it must be deleted.
+    const failures = [{ relPath: "vault/x.md", reason: "EACCES", sourceIndex: 1 }];
+    expect(fullySucceededSources(["/a/vault", "/b/vault"], failures)).toEqual(["/a/vault"]);
   });
 
-  it("does not false-match a sibling that shares a name prefix", () => {
-    // "vault2/..." must NOT cause "vault" to be treated as failed.
-    const failures = [{ relPath: "vault2/x.md", reason: "EACCES" }];
-    expect(fullySucceededSources(["/home/u/vault", "/home/u/vault2"], failures)).toEqual(["/home/u/vault"]);
-  });
-
-  it("INVARIANT: never returns a source that has a failure under it", () => {
+  it("INVARIANT: returns exactly the sources whose index has no failure", () => {
     const activePaths = ["/a/one", "/a/two", "/a/three"];
     const failures = [
-      { relPath: "two/deep/file.txt", reason: "x" },
-      { relPath: "three", reason: "y" },
+      { relPath: "two/deep/file.txt", reason: "x", sourceIndex: 1 },
+      { relPath: "three", reason: "y", sourceIndex: 2 },
     ];
     const safe = fullySucceededSources(activePaths, failures);
     expect(safe).toEqual(["/a/one"]);
-    for (const p of safe) {
-      const base = p.split(/[\\/]/).pop() as string;
-      const hasFailureUnder = failures.some(
-        (f) => f.relPath === base || f.relPath.startsWith(`${base}/`) || f.relPath.startsWith(`${base}\\`),
-      );
-      expect(hasFailureUnder).toBe(false);
-    }
+    // Ground truth, independent of the production predicate: the kept paths are
+    // exactly the activePaths whose index is not in the failed-index set.
+    const failedIdx = new Set(failures.map((f) => f.sourceIndex));
+    expect(safe).toEqual(activePaths.filter((_p, i) => !failedIdx.has(i)));
   });
 });
 
@@ -80,7 +75,9 @@ describe("transferSummary", () => {
   });
 
   it("reports a partial failure with counts and the failed file (the matrix-vault case)", () => {
-    const failures = [{ relPath: "matrix-vault/cnc-control-translator/.venv/lib64", reason: "broken symlink (No such file)" }];
+    const failures = [
+      { relPath: "matrix-vault/cnc-control-translator/.venv/lib64", reason: "broken symlink (No such file)", sourceIndex: 0 },
+    ];
     const s = transferSummary({ total: 3430, failures, move: false });
     expect(s.title).toBe("Completed with errors");
     expect(s.currentItem).toContain("3429/3430 copied; 1 failed:");
@@ -88,14 +85,14 @@ describe("transferSummary", () => {
   });
 
   it("truncates to the first 3 failures and notes the remainder", () => {
-    const failures = Array.from({ length: 5 }, (_, i) => ({ relPath: `f${i}`, reason: "x" }));
+    const failures = Array.from({ length: 5 }, (_, i) => ({ relPath: `f${i}`, reason: "x", sourceIndex: 0 }));
     const s = transferSummary({ total: 10, failures, move: false });
     expect(s.currentItem).toContain("5 failed:");
     expect(s.currentItem).toContain("…and 2 more");
   });
 
   it("notes that sources were kept on a failed move", () => {
-    const failures = [{ relPath: "vault/x", reason: "y" }];
+    const failures = [{ relPath: "vault/x", reason: "y", sourceIndex: 0 }];
     const s = transferSummary({ total: 5, failures, move: true });
     expect(s.currentItem).toContain("Sources with failures kept.");
   });

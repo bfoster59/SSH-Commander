@@ -43,6 +43,8 @@ export const MAX_TEXT_READ_BYTES = 10 * 1024 * 1024; // 10 MB
 export interface TransferFailure {
   relPath: string;
   reason: string;
+  /** Index into the transfer's activePaths that this entry came from. */
+  sourceIndex: number;
 }
 
 /**
@@ -59,17 +61,13 @@ export function isFatalTransferError(message: string): boolean {
  * For a `move`, decide which top-level source paths are safe to delete: ONLY those
  * whose every descendant copied successfully. A source with ANY failed file under
  * it is kept, so a move can never delete a file that did not make it across.
- * Entry relPaths are relative to the source's PARENT, so they begin with the
- * source's own basename (e.g. source `/home/u/vault` → relPaths `vault/...`).
+ * Matched by source INDEX — each scanned entry, and therefore each failure,
+ * carries the index of its originating activePaths element. Index-keying avoids
+ * both the path-normalization mismatch (raw basename vs the scan's resolved
+ * prefix) and the duplicate-basename case.
  */
 export function fullySucceededSources(activePaths: string[], failures: TransferFailure[]): string[] {
-  if (failures.length === 0) return [...activePaths];
-  return activePaths.filter((p) => {
-    const base = p.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || p;
-    return !failures.some(
-      (f) => f.relPath === base || f.relPath.startsWith(`${base}/`) || f.relPath.startsWith(`${base}\\`),
-    );
-  });
+  return activePaths.filter((_p, i) => !failures.some((f) => f.sourceIndex === i));
 }
 
 /** Build the final job status (title + currentItem) from the transfer outcome. */
