@@ -4,6 +4,14 @@ All notable changes to SSH Commander are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-06-16
+
+### Security
+- Cleared all `npm audit` vulnerabilities (was 1 critical / 2 high / 1 moderate → **0**):
+  patched the runtime `tar` dependency (file-smuggling advisory) and upgraded the dev
+  toolchain (vitest 3 → 4, pulling fixed esbuild / vite) to clear the remaining
+  build/test-only advisories. No runtime behavior change; build + full test suite verified green.
+
 ## [0.2.0] - 2026-06-16
 
 Tightening pass on the transfer pipeline + repo hygiene.
