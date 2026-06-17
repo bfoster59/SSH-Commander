@@ -12,7 +12,7 @@ import * as tar from "tar";
 import { shq, archiveBaseName, mimeForPath, MAX_TEXT_READ_BYTES, isFatalTransferError, fullySucceededSources, transferSummary } from "./server-utils.js";
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3002;
 // Bind to loopback by default so the local-filesystem + shell API is not
 // reachable from the network. Set HOST=0.0.0.0 to deliberately expose it
 // (only behind your own auth / on a trusted network).
